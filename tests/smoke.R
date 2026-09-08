@@ -36,4 +36,21 @@ w <- 1 / d$by_se^2
 manual <- sum(w * d$bx * d$by) / sum(w * d$bx^2)
 stopifnot(abs(fit$beta - manual) < 1e-12)
 
+# Manc-COJO .ldr.cojo can contain chromosome blocks; cross-chromosome LD is zero.
+f <- tempfile(fileext = ".ldr.cojo")
+writeLines(c(
+  "# Chromosome 1",
+  "SNP\trs1\trs2",
+  "rs1\t1\t0.25",
+  "rs2\t0.25\t1",
+  "# Chromosome 2",
+  "SNP\trs3",
+  "rs3\t1"
+), f)
+ld <- .cater_read_manc_ldr(f, c("rs1", "rs2", "rs3"))
+stopifnot(abs(ld["rs1", "rs2"] - 0.25) < 1e-12,
+          ld["rs1", "rs3"] == 0,
+          ld["rs3", "rs3"] == 1)
+unlink(f)
+
 cat("CATER-MR smoke tests passed\n")
