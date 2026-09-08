@@ -9,6 +9,11 @@ ss <- data.frame(
 s <- .cater_standardize_sumstats(ss)
 stopifnot(nrow(s) == 2L, all(is.finite(s$p)), identical(s$snp, c("rs1", "rs2")))
 
+# Duplicate/multiallelic SNP IDs are all removed rather than silently taking one record.
+dup_ss <- rbind(ss[1, ], transform(ss[1, ], A1 = "T", A2 = "G"), ss[2, ])
+dup_std <- .cater_standardize_sumstats(dup_ss)
+stopifnot(identical(dup_std$snp, "rs2"))
+
 # One-hop region map.
 grn <- data.frame(TF = c("TF1", "TF2"), Target = c("X", "X"))
 ann <- data.frame(symbol = c("X", "TF1", "TF2"), chr = c("1", "1", "2"), tss = c(1000, 5000, 10000))
@@ -18,7 +23,17 @@ q <- data.frame(snp = c("c", "t1", "t2"), chr = c("1", "1", "2"), pos = c(1000, 
 cm <- .cater_candidate_map(q, regions, "X")
 stopifnot(identical(cm$source, c("cis", "trans", "trans")))
 
-# Allele harmonization: swapped outcome alleles flip beta.
+# Manc-COJO LD allele orientation: swapping eQTL alleles flips beta and EAF.
+exp_ld <- q[1:2, ]
+ref_ld <- data.frame(snp = c("c", "t1"), ld_a1 = c("A", "G"), ld_a2 = c("G", "A"))
+aligned <- .cater_align_exp_to_ld(exp_ld, ref_ld)
+stopifnot(nrow(aligned) == 2L,
+          abs(aligned$beta[1] - .1) < 1e-12,
+          abs(aligned$beta[2] + .1) < 1e-12,
+          abs(aligned$eaf[2] - .8) < 1e-12,
+          identical(aligned$a1, c("A", "G")))
+
+# Outcome harmonization: swapped outcome alleles flip beta.
 exp <- q[1:2, ]
 exp$source <- c("cis", "trans")
 exp$parent_tf <- c("", "TF1")
