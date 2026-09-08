@@ -1,6 +1,6 @@
-# CATER-MR v0.1
+# CATER-MR v0.2
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
-# Minimal, target-centric implementation.
+# Minimal, target-centric implementation using Manc-COJO.
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -154,7 +154,7 @@
 .cater_write_cojo_ma <- function(qtl, path) {
   ok <- is.finite(qtl$eaf) & qtl$eaf > 0 & qtl$eaf < 1 & is.finite(qtl$n) & qtl$n > 0
   if (!all(ok)) {
-    .cater_stop("COJO requires EAF/freq and N for all retained QTL rows; %d rows are missing/invalid", sum(!ok))
+    .cater_stop("Manc-COJO requires EAF/freq and N for all retained QTL rows; %d rows are missing/invalid", sum(!ok))
   }
   ma <- data.frame(SNP = qtl$snp, A1 = qtl$a1, A2 = qtl$a2, freq = qtl$eaf,
                    b = qtl$beta, se = qtl$se, p = qtl$p, N = qtl$n,
@@ -162,53 +162,118 @@
   utils::write.table(ma, path, quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
 }
 
-.cater_run_cojo <- function(qtl, candidate_map, ld_bfile, gcta_bin, cojo_p,
-                            cojo_wind_kb, cojo_collinear, prefix, verbose) {
-  if (!length(ld_bfile) || !nzchar(ld_bfile)) .cater_stop("ld_bfile is required for COJO")
+.cater_read_manc_ldr <- function(path, selected) {
+  selected <- as.character(selected)
+  if (!length(selected)) return(matrix(numeric(), 0, 0))
+  if (length(selected) == 1L) return(matrix(1, 1, 1, dimnames = list(selected, selected)))
+  if (!file.exists(path)) .cater_stop("Manc-COJO LD output not found: %s", path)
+
+  lines <- trimws(readLines(path, warn = FALSE))
+  lines <- lines[nzchar(lines)]
+  ld <- diag(length(selected))
+  dimnames(ld) <- list(selected, selected)
+  i <- 1L
+  while (i <= length(lines)) {
+    if (startsWith(lines[i], "#")) {
+      i <- i + 1L
+      next
+    }
+    if (!grepl("^SNP(\\s|$)", lines[i])) {
+      i <- i + 1L
+      next
+    }
+    header <- strsplit(lines[i], "\\s+")[[1L]]
+    block_snps <- header[-1L]
+    i <- i + 1L
+    rows <- list()
+    while (i <= length(lines) && !startsWith(lines[i], "#") && !grepl("^SNP(\\s|$)", lines[i])) {
+      tok <- strsplit(lines[i], "\\s+")[[1L]]
+      if (length(tok) >= 2L) rows[[length(rows) + 1L]] <- tok
+      i <- i + 1L
+    }
+    if (!length(rows) || !length(block_snps)) next
+    rn <- vapply(rows, `[`, character(1), 1L)
+    vals <- do.call(rbind, lapply(rows, function(z) as.numeric(z[-1L])))
+    if (ncol(vals) != length(block_snps)) .cater_stop("Malformed Manc-COJO .ldr.cojo block in %s", path)
+    rownames(vals) <- rn
+    colnames(vals) <- block_snps
+    common <- intersect(intersect(rn, block_snps), selected)
+    if (length(common)) ld[common, common] <- vals[common, common, drop = FALSE]
+  }
+  ld
+}
+
+.cater_run_cojo <- function(qtl, candidate_map, ld_bfile, manc_cojo_bin, cojo_p,
+                            cojo_wind_kb, cojo_collinear, cojo_threads, prefix, verbose) {
+  if (length(ld_bfile) != 1L || !nzchar(ld_bfile)) .cater_stop("V0.2 currently expects one ld_bfile cohort")
   if (!file.exists(paste0(ld_bfile, ".bed")) || !file.exists(paste0(ld_bfile, ".bim")) || !file.exists(paste0(ld_bfile, ".fam"))) {
     .cater_stop("ld_bfile must point to a PLINK bed/bim/fam prefix: %s", ld_bfile)
   }
-  exe <- Sys.which(gcta_bin)
-  if (!nzchar(exe)) .cater_stop("Cannot find GCTA executable '%s' in PATH", gcta_bin)
+  exe <- Sys.which(manc_cojo_bin)
+  if (!nzchar(exe)) .cater_stop("Cannot find Manc-COJO executable '%s' in PATH", manc_cojo_bin)
+
   dir.create(dirname(prefix), recursive = TRUE, showWarnings = FALSE)
-  ma <- paste0(prefix, ".ma")
+  ma <- paste0(prefix, ".sumstat")
   extract <- paste0(prefix, ".candidate.snplist")
   .cater_write_cojo_ma(qtl, ma)
   writeLines(unique(candidate_map$snp), extract)
-  args <- c("--bfile", ld_bfile,
-            "--cojo-file", ma,
-            "--extract", extract,
-            "--cojo-slct",
-            "--cojo-p", format(cojo_p, scientific = TRUE),
-            "--cojo-wind", as.character(as.integer(cojo_wind_kb)),
-            "--cojo-collinear", as.character(cojo_collinear),
-            "--out", prefix)
-  .cater_msg(verbose, "COJO: %s %s", exe, paste(args, collapse = " "))
-  status <- system2(exe, args = args, stdout = paste0(prefix, ".stdout"), stderr = paste0(prefix, ".stderr"))
-  if (!identical(status, 0L)) .cater_stop("GCTA-COJO failed for %s (status %s); see %s.stderr", prefix, status, prefix)
-  jma_path <- paste0(prefix, ".jma")
+
+  select_prefix <- paste0(prefix, ".select")
+  select_args <- c(
+    "--bfile", ld_bfile,
+    "--cojo-file", ma,
+    "--extract", extract,
+    "--cojo-slct",
+    "--cojo-p", format(cojo_p, scientific = TRUE),
+    "--cojo-wind", as.character(as.integer(cojo_wind_kb)),
+    "--cojo-collinear", as.character(cojo_collinear),
+    "--thread-num", as.character(as.integer(cojo_threads)),
+    "--out", select_prefix
+  )
+  .cater_msg(verbose, "Manc-COJO selection: %s %s", exe, paste(select_args, collapse = " "))
+  status <- system2(exe, args = select_args,
+                    stdout = paste0(select_prefix, ".stdout"),
+                    stderr = paste0(select_prefix, ".stderr"))
+  if (!identical(status, 0L)) {
+    .cater_stop("Manc-COJO selection failed for %s (status %s); see %s.stderr", prefix, status, select_prefix)
+  }
+
+  jma_path <- paste0(select_prefix, ".jma.cojo")
   if (!file.exists(jma_path)) return(list(selected = data.frame(), ld = matrix(numeric(), 0, 0)))
   jma <- utils::read.table(jma_path, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
-  snp_col <- .cater_pick_col(jma, c("SNP"), label = "COJO .jma SNP")
+  snp_col <- .cater_pick_col(jma, c("SNP"), label = "Manc-COJO .jma.cojo SNP")
   selected <- data.frame(snp = as.character(jma[[snp_col]]), stringsAsFactors = FALSE)
-  ldr_path <- paste0(prefix, ".jma.ldr")
-  if (file.exists(ldr_path) && nrow(selected) > 1L) {
-    ldr <- utils::read.table(ldr_path, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
-    rn <- as.character(ldr[[1L]])
-    mat <- as.matrix(ldr[, -1L, drop = FALSE])
-    storage.mode(mat) <- "double"
-    rownames(mat) <- rn
-    colnames(mat) <- names(ldr)[-1L]
-    ld <- mat
-  } else if (nrow(selected) == 1L) {
+  if (!nrow(selected)) return(list(selected = selected, ld = matrix(numeric(), 0, 0)))
+  if (nrow(selected) == 1L) {
     ld <- matrix(1, 1, 1, dimnames = list(selected$snp, selected$snp))
-  } else ld <- matrix(numeric(), 0, 0)
+    return(list(selected = selected, ld = ld))
+  }
+
+  # Avoid --output-all during stepwise selection because it can emit a large .cma.cojo.
+  # Re-run only the selected SNPs in joint mode; the official tutorial states that
+  # this reproduces the same joint effects and gives a compact selected-SNP LD matrix.
+  joint_prefix <- paste0(prefix, ".joint")
+  joint_args <- c(
+    "--bfile", ld_bfile,
+    "--cojo-file", ma,
+    "--extract", jma_path, "2", "header",
+    "--cojo-joint",
+    "--thread-num", as.character(as.integer(cojo_threads)),
+    "--output-all",
+    "--out", joint_prefix
+  )
+  .cater_msg(verbose, "Manc-COJO joint/LD: %s %s", exe, paste(joint_args, collapse = " "))
+  status <- system2(exe, args = joint_args,
+                    stdout = paste0(joint_prefix, ".stdout"),
+                    stderr = paste0(joint_prefix, ".stderr"))
+  if (!identical(status, 0L)) {
+    .cater_stop("Manc-COJO joint analysis failed for %s (status %s); see %s.stderr", prefix, status, joint_prefix)
+  }
+  ld <- .cater_read_manc_ldr(paste0(joint_prefix, ".ldr.cojo"), selected$snp)
   list(selected = selected, ld = ld)
 }
 
-.cater_is_palindromic <- function(a1, a2) {
-  paste0(a1, a2) %in% c("AT", "TA", "CG", "GC")
-}
+.cater_is_palindromic <- function(a1, a2) paste0(a1, a2) %in% c("AT", "TA", "CG", "GC")
 
 .cater_harmonize <- function(exp, outcome, drop_palindromic = TRUE) {
   y <- outcome[match(exp$snp, outcome$snp), , drop = FALSE]
@@ -240,7 +305,7 @@
   if (!length(snps)) return(matrix(numeric(), 0, 0))
   if (length(snps) == 1L) return(matrix(1, 1, 1, dimnames = list(snps, snps)))
   if (!all(snps %in% rownames(ld)) || !all(snps %in% colnames(ld))) {
-    .cater_stop("COJO LD matrix does not contain all harmonized selected SNPs")
+    .cater_stop("Manc-COJO LD matrix does not contain all harmonized selected SNPs")
   }
   ld[snps, snps, drop = FALSE]
 }
@@ -281,13 +346,14 @@
 #' @param outcome Outcome GWAS summary-statistics data.frame.
 #' @param gene_annotation Optional data.frame with symbol, chr and tss. Not needed if GRN embeds TF_chr/TF_tss and Target_chr/Target_tss.
 #' @param ld_bfile PLINK bed/bim/fam prefix from an ancestry-matched LD reference; ideally the QTL donor genotypes.
-#' @param gcta_bin GCTA executable name/path, default gcta64.
+#' @param manc_cojo_bin Manc-COJO executable name/path, default manc_cojo.
 #' @param targets Optional character vector. Default is all unique TF and Target symbols in the GRN.
 #' @param cis_window Cis window in bp around target TSS.
 #' @param tf_window One-hop TF-locus window in bp around TF TSS. Defaults to cis_window.
-#' @param cojo_p COJO selection threshold. V0.1 uses one threshold for cis and trans.
-#' @param cojo_wind_kb GCTA --cojo-wind.
-#' @param cojo_collinear GCTA --cojo-collinear.
+#' @param cojo_p Manc-COJO selection threshold.
+#' @param cojo_wind_kb Manc-COJO --cojo-wind in kb.
+#' @param cojo_collinear Manc-COJO --cojo-collinear.
+#' @param cojo_threads Manc-COJO --thread-num.
 #' @param qtl_n Optional constant QTL donor N when summary files do not contain N.
 #' @param outdir Output directory.
 #' @param drop_palindromic Drop A/T and C/G instruments during harmonization.
@@ -299,13 +365,14 @@ cater_mr <- function(grn,
                      outcome,
                      gene_annotation = NULL,
                      ld_bfile,
-                     gcta_bin = "gcta64",
+                     manc_cojo_bin = "manc_cojo",
                      targets = NULL,
                      cis_window = 1e6,
                      tf_window = cis_window,
                      cojo_p = 5e-8,
                      cojo_wind_kb = 10000L,
                      cojo_collinear = 0.9,
+                     cojo_threads = 1L,
                      qtl_n = NULL,
                      outdir = "CATER_MR_results",
                      drop_palindromic = TRUE,
@@ -353,7 +420,8 @@ cater_mr <- function(grn,
     }
     prefix <- file.path(outdir, "cojo", target)
     cojo <- tryCatch(
-      .cater_run_cojo(qtl, cmap, ld_bfile, gcta_bin, cojo_p, cojo_wind_kb, cojo_collinear, prefix, verbose),
+      .cater_run_cojo(qtl, cmap, ld_bfile, manc_cojo_bin, cojo_p, cojo_wind_kb,
+                      cojo_collinear, cojo_threads, prefix, verbose),
       error = function(e) e
     )
     if (inherits(cojo, "error")) {
@@ -387,7 +455,8 @@ cater_mr <- function(grn,
       d <- if (m == "combined") h else h[h$source == m, , drop = FALSE]
       ld <- if (nrow(d)) .cater_subset_ld(cojo$ld, d$snp) else matrix(numeric(), 0, 0)
       est <- .cater_givw(d, ld)
-      data.frame(target = target, model = m, est, status = if (nrow(d)) "OK" else paste0("NO_", toupper(m), "_IV"),
+      data.frame(target = target, model = m, est,
+                 status = if (nrow(d)) "OK" else paste0("NO_", toupper(m), "_IV"),
                  stringsAsFactors = FALSE)
     })
     all_results[[target]] <- do.call(rbind, rows)
