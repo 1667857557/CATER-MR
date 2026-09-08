@@ -59,7 +59,10 @@
     is.finite(out$p) & out$p >= 0 & out$p <= 1 &
     out$a1 %in% c("A", "C", "G", "T") & out$a2 %in% c("A", "C", "G", "T")
   out <- out[keep, , drop = FALSE]
-  out <- out[!duplicated(out$snp), , drop = FALSE]
+  # Manc-COJO excludes multiallelic/duplicate IDs. Remove every duplicated ID
+  # instead of silently keeping the first record.
+  dup <- duplicated(out$snp) | duplicated(out$snp, fromLast = TRUE)
+  out <- out[!dup, , drop = FALSE]
   rownames(out) <- NULL
   out
 }
@@ -69,8 +72,7 @@
   if (!is.data.frame(grn)) .cater_stop("grn must be a data.frame or a list containing $grn")
   tf <- .cater_pick_col(grn, c("TF", "tf", "regulator"), label = "GRN TF")
   target <- .cater_pick_col(grn, c("Target", "target", "gene"), label = "GRN target")
-  out <- data.frame(TF = as.character(grn[[tf]]), Target = as.character(grn[[target]]),
-                    stringsAsFactors = FALSE)
+  out <- data.frame(TF = as.character(grn[[tf]]), Target = as.character(grn[[target]]), stringsAsFactors = FALSE)
   out <- out[nzchar(out$TF) & nzchar(out$Target) & !is.na(out$TF) & !is.na(out$Target), , drop = FALSE]
   unique(out)
 }
@@ -153,12 +155,9 @@
 
 .cater_write_cojo_ma <- function(qtl, path) {
   ok <- is.finite(qtl$eaf) & qtl$eaf > 0 & qtl$eaf < 1 & is.finite(qtl$n) & qtl$n > 0
-  if (!all(ok)) {
-    .cater_stop("Manc-COJO requires EAF/freq and N for all retained QTL rows; %d rows are missing/invalid", sum(!ok))
-  }
+  if (!all(ok)) .cater_stop("Manc-COJO requires EAF/freq and N for all retained QTL rows; %d rows are missing/invalid", sum(!ok))
   ma <- data.frame(SNP = qtl$snp, A1 = qtl$a1, A2 = qtl$a2, freq = qtl$eaf,
-                   b = qtl$beta, se = qtl$se, p = qtl$p, N = qtl$n,
-                   stringsAsFactors = FALSE)
+                   b = qtl$beta, se = qtl$se, p = qtl$p, N = qtl$n, stringsAsFactors = FALSE)
   utils::write.table(ma, path, quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
 }
 
@@ -167,21 +166,13 @@
   if (!length(selected)) return(matrix(numeric(), 0, 0))
   if (length(selected) == 1L) return(matrix(1, 1, 1, dimnames = list(selected, selected)))
   if (!file.exists(path)) .cater_stop("Manc-COJO LD output not found: %s", path)
-
   lines <- trimws(readLines(path, warn = FALSE))
   lines <- lines[nzchar(lines)]
-  ld <- diag(length(selected))
-  dimnames(ld) <- list(selected, selected)
+  ld <- diag(length(selected)); dimnames(ld) <- list(selected, selected)
   i <- 1L
   while (i <= length(lines)) {
-    if (startsWith(lines[i], "#")) {
-      i <- i + 1L
-      next
-    }
-    if (!grepl("^SNP(\\s|$)", lines[i])) {
-      i <- i + 1L
-      next
-    }
+    if (startsWith(lines[i], "#")) { i <- i + 1L; next }
+    if (!grepl("^SNP(\\s|$)", lines[i])) { i <- i + 1L; next }
     header <- strsplit(lines[i], "\\s+")[[1L]]
     block_snps <- header[-1L]
     i <- i + 1L
@@ -195,8 +186,7 @@
     rn <- vapply(rows, `[`, character(1), 1L)
     vals <- do.call(rbind, lapply(rows, function(z) as.numeric(z[-1L])))
     if (ncol(vals) != length(block_snps)) .cater_stop("Malformed Manc-COJO .ldr.cojo block in %s", path)
-    rownames(vals) <- rn
-    colnames(vals) <- block_snps
+    rownames(vals) <- rn; colnames(vals) <- block_snps
     common <- intersect(intersect(rn, block_snps), selected)
     if (length(common)) ld[common, common] <- vals[common, common, drop = FALSE]
   }
@@ -211,7 +201,6 @@
   }
   exe <- Sys.which(manc_cojo_bin)
   if (!nzchar(exe)) .cater_stop("Cannot find Manc-COJO executable '%s' in PATH", manc_cojo_bin)
-
   dir.create(dirname(prefix), recursive = TRUE, showWarnings = FALSE)
   ma <- paste0(prefix, ".sumstat")
   extract <- paste0(prefix, ".candidate.snplist")
@@ -219,58 +208,60 @@
   writeLines(unique(candidate_map$snp), extract)
 
   select_prefix <- paste0(prefix, ".select")
-  select_args <- c(
-    "--bfile", ld_bfile,
-    "--cojo-file", ma,
-    "--extract", extract,
-    "--cojo-slct",
-    "--cojo-p", format(cojo_p, scientific = TRUE),
-    "--cojo-wind", as.character(as.integer(cojo_wind_kb)),
-    "--cojo-collinear", as.character(cojo_collinear),
-    "--thread-num", as.character(as.integer(cojo_threads)),
-    "--out", select_prefix
-  )
+  select_args <- c("--bfile", ld_bfile, "--cojo-file", ma, "--extract", extract,
+                   "--cojo-slct", "--cojo-p", format(cojo_p, scientific = TRUE),
+                   "--cojo-wind", as.character(as.integer(cojo_wind_kb)),
+                   "--cojo-collinear", as.character(cojo_collinear),
+                   "--thread-num", as.character(as.integer(cojo_threads)), "--out", select_prefix)
   .cater_msg(verbose, "Manc-COJO selection: %s %s", exe, paste(select_args, collapse = " "))
-  status <- system2(exe, args = select_args,
-                    stdout = paste0(select_prefix, ".stdout"),
-                    stderr = paste0(select_prefix, ".stderr"))
-  if (!identical(status, 0L)) {
-    .cater_stop("Manc-COJO selection failed for %s (status %s); see %s.stderr", prefix, status, select_prefix)
-  }
+  status <- system2(exe, args = select_args, stdout = paste0(select_prefix, ".stdout"), stderr = paste0(select_prefix, ".stderr"))
+  if (!identical(status, 0L)) .cater_stop("Manc-COJO selection failed for %s (status %s); see %s.stderr", prefix, status, select_prefix)
 
   jma_path <- paste0(select_prefix, ".jma.cojo")
   if (!file.exists(jma_path)) return(list(selected = data.frame(), ld = matrix(numeric(), 0, 0)))
   jma <- utils::read.table(jma_path, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
   snp_col <- .cater_pick_col(jma, c("SNP"), label = "Manc-COJO .jma.cojo SNP")
-  selected <- data.frame(snp = as.character(jma[[snp_col]]), stringsAsFactors = FALSE)
+  a1_col <- .cater_pick_col(jma, c("A1"), label = "Manc-COJO .jma.cojo A1")
+  a2_col <- .cater_pick_col(jma, c("A2"), label = "Manc-COJO .jma.cojo A2")
+  selected <- data.frame(snp = as.character(jma[[snp_col]]),
+                         ld_a1 = toupper(as.character(jma[[a1_col]])),
+                         ld_a2 = toupper(as.character(jma[[a2_col]])),
+                         stringsAsFactors = FALSE)
   if (!nrow(selected)) return(list(selected = selected, ld = matrix(numeric(), 0, 0)))
   if (nrow(selected) == 1L) {
     ld <- matrix(1, 1, 1, dimnames = list(selected$snp, selected$snp))
     return(list(selected = selected, ld = ld))
   }
 
-  # Avoid --output-all during stepwise selection because it can emit a large .cma.cojo.
-  # Re-run only the selected SNPs in joint mode; the official tutorial states that
-  # this reproduces the same joint effects and gives a compact selected-SNP LD matrix.
+  # --output-all in selection mode can emit a huge .cma.cojo. Re-run only
+  # selected SNPs in joint mode to obtain the compact selected-SNP LD matrix.
   joint_prefix <- paste0(prefix, ".joint")
-  joint_args <- c(
-    "--bfile", ld_bfile,
-    "--cojo-file", ma,
-    "--extract", jma_path, "2", "header",
-    "--cojo-joint",
-    "--thread-num", as.character(as.integer(cojo_threads)),
-    "--output-all",
-    "--out", joint_prefix
-  )
+  joint_args <- c("--bfile", ld_bfile, "--cojo-file", ma,
+                  "--extract", jma_path, "2", "header", "--cojo-joint",
+                  "--thread-num", as.character(as.integer(cojo_threads)),
+                  "--output-all", "--out", joint_prefix)
   .cater_msg(verbose, "Manc-COJO joint/LD: %s %s", exe, paste(joint_args, collapse = " "))
-  status <- system2(exe, args = joint_args,
-                    stdout = paste0(joint_prefix, ".stdout"),
-                    stderr = paste0(joint_prefix, ".stderr"))
-  if (!identical(status, 0L)) {
-    .cater_stop("Manc-COJO joint analysis failed for %s (status %s); see %s.stderr", prefix, status, joint_prefix)
-  }
+  status <- system2(exe, args = joint_args, stdout = paste0(joint_prefix, ".stdout"), stderr = paste0(joint_prefix, ".stderr"))
+  if (!identical(status, 0L)) .cater_stop("Manc-COJO joint analysis failed for %s (status %s); see %s.stderr", prefix, status, joint_prefix)
   ld <- .cater_read_manc_ldr(paste0(joint_prefix, ".ldr.cojo"), selected$snp)
   list(selected = selected, ld = ld)
+}
+
+.cater_align_exp_to_ld <- function(exp, selected) {
+  ref <- selected[match(exp$snp, selected$snp), , drop = FALSE]
+  ok <- !is.na(ref$snp)
+  exp <- exp[ok, , drop = FALSE]; ref <- ref[ok, , drop = FALSE]
+  if (!nrow(exp)) return(exp)
+  same <- exp$a1 == ref$ld_a1 & exp$a2 == ref$ld_a2
+  swap <- exp$a1 == ref$ld_a2 & exp$a2 == ref$ld_a1
+  keep <- same | swap
+  exp <- exp[keep, , drop = FALSE]; ref <- ref[keep, , drop = FALSE]; swap <- swap[keep]
+  if (!nrow(exp)) return(exp)
+  exp$beta[swap] <- -exp$beta[swap]
+  if ("eaf" %in% names(exp)) exp$eaf[swap & is.finite(exp$eaf)] <- 1 - exp$eaf[swap & is.finite(exp$eaf)]
+  exp$a1 <- ref$ld_a1
+  exp$a2 <- ref$ld_a2
+  exp
 }
 
 .cater_is_palindromic <- function(a1, a2) paste0(a1, a2) %in% c("AT", "TA", "CG", "GC")
@@ -278,35 +269,24 @@
 .cater_harmonize <- function(exp, outcome, drop_palindromic = TRUE) {
   y <- outcome[match(exp$snp, outcome$snp), , drop = FALSE]
   keep <- !is.na(y$snp)
-  exp <- exp[keep, , drop = FALSE]
-  y <- y[keep, , drop = FALSE]
+  exp <- exp[keep, , drop = FALSE]; y <- y[keep, , drop = FALSE]
   if (!nrow(exp)) return(data.frame())
   same <- exp$a1 == y$a1 & exp$a2 == y$a2
   swap <- exp$a1 == y$a2 & exp$a2 == y$a1
   keep <- same | swap
   if (drop_palindromic) keep <- keep & !.cater_is_palindromic(exp$a1, exp$a2)
-  exp <- exp[keep, , drop = FALSE]
-  y <- y[keep, , drop = FALSE]
-  swap <- swap[keep]
+  exp <- exp[keep, , drop = FALSE]; y <- y[keep, , drop = FALSE]; swap <- swap[keep]
   if (!nrow(exp)) return(data.frame())
-  data.frame(
-    snp = exp$snp,
-    source = exp$source,
-    parent_tf = exp$parent_tf,
-    bx = exp$beta,
-    bx_se = exp$se,
-    by = ifelse(swap, -y$beta, y$beta),
-    by_se = y$se,
-    stringsAsFactors = FALSE
-  )
+  data.frame(snp = exp$snp, source = exp$source, parent_tf = exp$parent_tf,
+             bx = exp$beta, bx_se = exp$se,
+             by = ifelse(swap, -y$beta, y$beta), by_se = y$se,
+             stringsAsFactors = FALSE)
 }
 
 .cater_subset_ld <- function(ld, snps) {
   if (!length(snps)) return(matrix(numeric(), 0, 0))
   if (length(snps) == 1L) return(matrix(1, 1, 1, dimnames = list(snps, snps)))
-  if (!all(snps %in% rownames(ld)) || !all(snps %in% colnames(ld))) {
-    .cater_stop("Manc-COJO LD matrix does not contain all harmonized selected SNPs")
-  }
+  if (!all(snps %in% rownames(ld)) || !all(snps %in% colnames(ld))) .cater_stop("Manc-COJO LD matrix does not contain all harmonized selected SNPs")
   ld[snps, snps, drop = FALSE]
 }
 
@@ -315,13 +295,11 @@
   if (!n) return(data.frame(n_iv = 0L, beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_, mean_F = NA_real_, min_F = NA_real_))
   bx <- dat$bx; by <- dat$by; sy <- dat$by_se
   if (n == 1L) {
-    b <- by / bx
-    s <- abs(sy / bx)
+    b <- by / bx; s <- abs(sy / bx)
     return(data.frame(n_iv = 1L, beta = b, se = s, p = 2 * stats::pnorm(-abs(b / s)),
                       Q = NA_real_, Q_p = NA_real_, mean_F = (bx / dat$bx_se)^2, min_F = (bx / dat$bx_se)^2))
   }
-  D <- diag(sy, nrow = n)
-  omega <- D %*% ld %*% D
+  D <- diag(sy, nrow = n); omega <- D %*% ld %*% D
   inv <- tryCatch(solve(omega), error = function(e) NULL)
   if (is.null(inv)) {
     eps <- max(diag(omega), na.rm = TRUE) * 1e-10
@@ -329,11 +307,8 @@
   }
   den <- as.numeric(crossprod(bx, inv %*% bx))
   if (!is.finite(den) || den <= 0) .cater_stop("Non-positive GIVW denominator")
-  b <- as.numeric(crossprod(bx, inv %*% by)) / den
-  s <- sqrt(1 / den)
-  resid <- by - b * bx
-  q <- as.numeric(crossprod(resid, inv %*% resid))
-  f <- (bx / dat$bx_se)^2
+  b <- as.numeric(crossprod(bx, inv %*% by)) / den; s <- sqrt(1 / den)
+  resid <- by - b * bx; q <- as.numeric(crossprod(resid, inv %*% resid)); f <- (bx / dat$bx_se)^2
   data.frame(n_iv = n, beta = b, se = s, p = 2 * stats::pnorm(-abs(b / s)),
              Q = q, Q_p = stats::pchisq(q, df = n - 1L, lower.tail = FALSE),
              mean_F = mean(f, na.rm = TRUE), min_F = min(f, na.rm = TRUE))
@@ -341,25 +316,8 @@
 
 #' Run minimal CATER-MR analysis
 #'
-#' @param grn Cell-type-specific GRN data.frame, or list with $grn. Must contain TF and Target.
-#' @param eqtl_dir Directory containing one genome-wide eQTL summary file per gene, named SYMBOL.txt.gz.
-#' @param outcome Outcome GWAS summary-statistics data.frame.
-#' @param gene_annotation Optional data.frame with symbol, chr and tss. Not needed if GRN embeds TF_chr/TF_tss and Target_chr/Target_tss.
-#' @param ld_bfile PLINK bed/bim/fam prefix from an ancestry-matched LD reference; ideally the QTL donor genotypes.
-#' @param manc_cojo_bin Manc-COJO executable name/path, default manc_cojo.
-#' @param targets Optional character vector. Default is all unique TF and Target symbols in the GRN.
-#' @param cis_window Cis window in bp around target TSS.
-#' @param tf_window One-hop TF-locus window in bp around TF TSS. Defaults to cis_window.
-#' @param cojo_p Manc-COJO selection threshold.
-#' @param cojo_wind_kb Manc-COJO --cojo-wind in kb.
-#' @param cojo_collinear Manc-COJO --cojo-collinear.
-#' @param cojo_threads Manc-COJO --thread-num.
-#' @param qtl_n Optional constant QTL donor N when summary files do not contain N.
-#' @param outdir Output directory.
-#' @param drop_palindromic Drop A/T and C/G instruments during harmonization.
-#' @param verbose Print progress.
-#'
-#' @return data.frame with cis, trans and combined MR results per target.
+#' Primary inputs are a cell-type-specific GRN, an eQTL directory containing
+#' SYMBOL.txt.gz full-summary files, and an in-memory outcome summary object.
 cater_mr <- function(grn,
                      eqtl_dir,
                      outcome,
@@ -378,13 +336,10 @@ cater_mr <- function(grn,
                      drop_palindromic = TRUE,
                      verbose = TRUE) {
   if (!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s", eqtl_dir)
-  grn0 <- grn
-  grn <- .cater_standardize_grn(grn)
+  grn0 <- grn; grn <- .cater_standardize_grn(grn)
   annotation <- .cater_standardize_annotation(gene_annotation)
   if (is.null(annotation)) annotation <- .cater_annotation_from_grn(grn0)
-  if (is.null(annotation)) {
-    .cater_stop("Gene coordinates are required. Supply gene_annotation with symbol/chr/tss, or embed TF_chr/TF_tss and Target_chr/Target_tss in the GRN object.")
-  }
+  if (is.null(annotation)) .cater_stop("Gene coordinates are required: gene_annotation(symbol/chr/tss) or GRN TF_chr/TF_tss/Target_chr/Target_tss")
   outcome <- .cater_standardize_sumstats(outcome, label = "outcome", require_position = FALSE)
   if (is.null(targets)) targets <- sort(unique(c(grn$TF, grn$Target)))
   targets <- unique(as.character(targets))
@@ -393,65 +348,40 @@ cater_mr <- function(grn,
   dir.create(file.path(outdir, "instruments"), recursive = TRUE, showWarnings = FALSE)
 
   all_results <- list()
+  empty_row <- function(target, status) data.frame(target = target, model = NA_character_, n_iv = 0L,
+    beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
+    mean_F = NA_real_, min_F = NA_real_, status = status)
+
   for (target in targets) {
     .cater_msg(verbose, "[%s] starting", target)
     qtl_file <- file.path(eqtl_dir, paste0(target, ".txt.gz"))
-    if (!file.exists(qtl_file)) {
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "NO_EQTL_FILE")
-      next
-    }
+    if (!file.exists(qtl_file)) { all_results[[target]] <- empty_row(target, "NO_EQTL_FILE"); next }
     parents <- unique(grn$TF[grn$Target == target])
     regions <- .cater_make_regions(target, parents, annotation, cis_window, tf_window)
-    if (is.null(regions)) {
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "NO_TARGET_ANNOTATION")
-      next
-    }
+    if (is.null(regions)) { all_results[[target]] <- empty_row(target, "NO_TARGET_ANNOTATION"); next }
     qtl <- .cater_standardize_sumstats(.cater_read_table(qtl_file), n_default = qtl_n, label = paste0(target, " eQTL"))
     cmap <- .cater_candidate_map(qtl, regions, target)
-    if (!nrow(cmap)) {
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "NO_CANDIDATE_SNP")
-      next
-    }
+    if (!nrow(cmap)) { all_results[[target]] <- empty_row(target, "NO_CANDIDATE_SNP"); next }
+
     prefix <- file.path(outdir, "cojo", target)
-    cojo <- tryCatch(
-      .cater_run_cojo(qtl, cmap, ld_bfile, manc_cojo_bin, cojo_p, cojo_wind_kb,
-                      cojo_collinear, cojo_threads, prefix, verbose),
-      error = function(e) e
-    )
+    cojo <- tryCatch(.cater_run_cojo(qtl, cmap, ld_bfile, manc_cojo_bin, cojo_p,
+      cojo_wind_kb, cojo_collinear, cojo_threads, prefix, verbose), error = function(e) e)
     if (inherits(cojo, "error")) {
       warning(sprintf("[%s] %s", target, conditionMessage(cojo)))
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "COJO_FAILED")
-      next
+      all_results[[target]] <- empty_row(target, "COJO_FAILED"); next
     }
-    if (!nrow(cojo$selected)) {
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "NO_COJO_SIGNAL")
-      next
-    }
+    if (!nrow(cojo$selected)) { all_results[[target]] <- empty_row(target, "NO_COJO_SIGNAL"); next }
+
     sel <- qtl[match(cojo$selected$snp, qtl$snp), , drop = FALSE]
+    sel <- .cater_align_exp_to_ld(sel, cojo$selected)
+    if (!nrow(sel)) { all_results[[target]] <- empty_row(target, "NO_LD_ALLELE_MATCH"); next }
     meta <- cmap[match(sel$snp, cmap$snp), , drop = FALSE]
-    sel$source <- meta$source
-    sel$parent_tf <- meta$parent_tf
+    sel$source <- meta$source; sel$parent_tf <- meta$parent_tf
     h <- .cater_harmonize(sel, outcome, drop_palindromic = drop_palindromic)
-    if (!nrow(h)) {
-      all_results[[target]] <- data.frame(target = target, model = NA_character_, n_iv = 0L,
-                                          beta = NA_real_, se = NA_real_, p = NA_real_, Q = NA_real_, Q_p = NA_real_,
-                                          mean_F = NA_real_, min_F = NA_real_, status = "NO_HARMONIZED_IV")
-      next
-    }
-    utils::write.table(h, file.path(outdir, "instruments", paste0(target, ".tsv")),
-                       sep = "\t", quote = FALSE, row.names = FALSE)
-    models <- c("cis", "trans", "combined")
-    rows <- lapply(models, function(m) {
+    if (!nrow(h)) { all_results[[target]] <- empty_row(target, "NO_HARMONIZED_IV"); next }
+    utils::write.table(h, file.path(outdir, "instruments", paste0(target, ".tsv")), sep = "\t", quote = FALSE, row.names = FALSE)
+
+    rows <- lapply(c("cis", "trans", "combined"), function(m) {
       d <- if (m == "combined") h else h[h$source == m, , drop = FALSE]
       ld <- if (nrow(d)) .cater_subset_ld(cojo$ld, d$snp) else matrix(numeric(), 0, 0)
       est <- .cater_givw(d, ld)
@@ -461,8 +391,7 @@ cater_mr <- function(grn,
     })
     all_results[[target]] <- do.call(rbind, rows)
   }
-  result <- do.call(rbind, all_results)
-  rownames(result) <- NULL
+  result <- do.call(rbind, all_results); rownames(result) <- NULL
   utils::write.table(result, file.path(outdir, "cater_mr_results.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   result
 }
