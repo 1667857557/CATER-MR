@@ -15,5 +15,7 @@ jobs:
         run: |
           Rscript -e "parse(file='CATER_MR.R')"
           Rscript -e "parse(file='SCMORE_GRN.R')"
-      - name: Run smoke tests
+      - name: Run core estimator smoke tests
         run: Rscript tests/smoke.R
+      - name: Run scMORE-to-CATER GRN contract tests
+        run: Rscript tests/scmore_contract_smoke.R
