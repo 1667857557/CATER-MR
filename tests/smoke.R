@@ -1,4 +1,5 @@
 source("CATER_MR.R")
+source("SCMORE_GRN.R")
 
 # Basic summary-stat normalization.
 ss <- data.frame(
@@ -127,4 +128,32 @@ mf <- .cater_mvmr_fit(B,seB,by,rep(.02,nrow(B)),diag(nrow(B)),c("X","Z"),Cexp)
 stopifnot(mf$status=="OK",abs(mf$beta["X"]-.5)<1e-10,abs(mf$beta["Z"]-.6)<1e-10)
 stopifnot(isTRUE(mf$conditional_F_converged["X"]),mf$conditional_F_df["X"]==3L)
 
-cat("CATER-MR v0.5 core-estimator regression tests passed\n")
+# scMORE adapter forwards the audited createRegulon public defaults exactly.
+sa <- .cater_scmore_create_args()
+stopifnot(identical(sa$n_targets,5),identical(sa$peak2gene_method,"Signac"),
+          identical(sa$infer_method,"glm"),identical(sa$tss_upstream,100000),
+          identical(sa$tss_downstream,0),identical(sa$exclude_exon_regions,TRUE))
+stopifnot(!"conserved_regions" %in% names(sa))
+
+# Omitting conserved_regions lets the upstream function evaluate its own default;
+# specifying it forwards the object unchanged.
+mock_create <- function(single_cell,n_targets=5,peak2gene_method="Signac",infer_method="glm",
+                        tss_upstream=100000,tss_downstream=0,exclude_exon_regions=TRUE,
+                        conserved_regions="UPSTREAM_DEFAULT") {
+  list(grn=data.frame(TF="TF1",Target="X",Regions="chr1-1-2",Pval=.01),
+       tf_names="TF1",seen=list(single_cell=single_cell,n_targets=n_targets,
+       peak2gene_method=peak2gene_method,infer_method=infer_method,tss_upstream=tss_upstream,
+       tss_downstream=tss_downstream,exclude_exon_regions=exclude_exon_regions,
+       conserved_regions=conserved_regions))
+}
+mock1 <- .cater_scmore_call_create_regulon("CELL_SUBSET",sa,create_fun=mock_create)
+stopifnot(identical(mock1$seen$single_cell,"CELL_SUBSET"),
+          identical(mock1$seen$conserved_regions,"UPSTREAM_DEFAULT"))
+custom_regions <- structure(list(id=1L),class="mock_regions")
+sa2 <- .cater_scmore_create_args(conserved_regions=custom_regions)
+mock2 <- .cater_scmore_call_create_regulon("CELL_SUBSET",sa2,create_fun=mock_create)
+stopifnot(identical(mock2$seen$conserved_regions,custom_regions))
+.cater_scmore_validate_output(mock2,"MockCell")
+stopifnot(identical(.cater_scmore_safe_name("CD8+ T / effector"),"CD8_T_effector"))
+
+cat("CATER-MR v0.5 core-estimator + scMORE adapter regression tests passed\n")
