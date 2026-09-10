@@ -1,31 +1,77 @@
-# scMORE cell-type GRN construction for CATER-MR
+# scMORE → CATER-MR cell-type GRN construction
 
-CATER-MR can construct outcome-independent, cell-type-specific GRNs directly from a processed single-cell multiome Seurat object while delegating the actual GRN inference to the upstream `scMORE::createRegulon()` implementation.
+CATER-MR can construct its required **cell-type-specific, direct one-hop GRN input** from a processed single-cell multiome Seurat object while delegating the actual regulatory-network inference to the audited upstream `scMORE::createRegulon()` implementation.
 
-## Why this adapter is needed
+## CATER-MR GRN contract
 
-The current scMORE upstream code distinguishes two stages:
+The MR estimator does not need a TF–peak–gene row table as its graph. For each cell type it needs a direct topology
 
-1. `createRegulon(single_cell, ...)` constructs a **global TF-peak-gene GRN for the cells supplied to the function** using Pando.
-2. The top-level `scMore()` workflow subsequently computes cell-type specificity and integrates GWAS/MAGMA information to identify trait-relevant cell-type-specific eRegulons.
+```text
+TF  Target
+```
 
-CATER-MR must not use GWAS/outcome information to construct or select its GRN, because the GRN is part of the exposure-side instrument-selection mechanism. Therefore CATER-MR does **not** call `scMore()` or `regulon2disease()` when constructing GRNs.
+with one unique direct `TF -> Target` edge, because for target `X` the candidate region is
 
-Instead, the CATER adapter defines the cell population first and then calls the unmodified upstream GRN engine:
+\[
+\mathcal R_X=L_X\cup\bigcup_{T\in P_1(X)}L_T,
+\]
+
+where `P1(X)` is the set of direct upstream TFs.
+
+To make the GRN directly consumable by `cater_mr()` without another annotation step, the generated table contains:
+
+```text
+TF
+Target
+TF_chr
+TF_tss
+Target_chr
+Target_tss
+cell_type
+```
+
+Only this direct one-hop topology is used by CATER-MR. No two-hop or recursive expansion is performed, and scMORE edge scores never rescale eQTL effects.
+
+## Two-layer architecture
+
+Upstream scMORE and CATER-MR have different output contracts, so the adapter deliberately keeps two layers:
 
 ```text
 processed multiome Seurat
-    -> split cells by cell type
-    -> scMORE::createRegulon(cell-type subset)
-    -> one GRN per cell type
-    -> CATER-MR
+    -> subset one cell type
+    -> scMORE::createRegulon() unchanged
+         -> raw TF/Target/Regions/Pval-or-Corr-or-Gain evidence
+    -> deterministic CATER adapter
+         -> unique direct TF -> Target edges
+         -> remove TF == Target self-loops from the CATER trans graph
+         -> append hg38 TF/Target chr + TSS
+    -> cater_mr()
 ```
 
-The only CATER-specific operation before GRN inference is the cell subset. No scMORE/Pando regression, motif, module, filtering or edge-score formula is reimplemented in CATER-MR.
+The raw scMORE output is never overwritten. It is retained in `scmore_outputs` and `edge_evidence`. The CATER-facing graph is stored separately in `grns`.
+
+This separation is important: collapsing repeated TF–Target rows is a graph-contract transformation, not a new statistical aggregation. CATER-MR does **not** invent a combined P value, correlation, or edge weight across scMORE peak/evidence rows.
+
+## Why per-cell-type refitting is used
+
+The audited upstream `createRegulon()` constructs a global GRN for the cells supplied to it. CATER-MR therefore defines the cell population first and calls that same upstream engine separately for each cell type:
+
+```text
+all processed cells
+  -> cells of type c
+  -> scMORE::createRegulon(cells of type c)
+  -> GRN_c
+```
+
+The internal scMORE/Pando computation is unchanged. This is a CATER-MR adapter around the upstream global-per-input engine; it is not a claim that scMORE's top-level `scMore()` function natively refits one Pando network per cell type.
+
+## Why `scMore()` / `regulon2disease()` are not used
+
+The top-level scMORE workflow adds cell-type specificity and GWAS/MAGMA-derived trait relevance. CATER-MR uses the GRN to gate trans-instrument search, so outcome/GWAS information must not determine which GRN edges enter the primary MR analysis.
+
+Therefore the CATER-MR GRN layer stops at outcome-independent `createRegulon()` inference. CTS/TRS or disease relevance can be used later as external annotation or sensitivity analysis, but not as the primary trans-IV gate.
 
 ## Audited upstream revision
-
-The adapter was audited against:
 
 ```text
 repository: mayunlong89/scMORE
@@ -33,176 +79,192 @@ commit:     f614736b9f49631471b0f18dfa415ee35e4d7b66
 version:    2.0.0
 ```
 
-For strict reproducibility install exactly that GitHub revision:
+Recommended reproducible install:
 
 ```r
-if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 remotes::install_github(
   "mayunlong89/scMORE@f614736b9f49631471b0f18dfa415ee35e4d7b66"
 )
 ```
 
-`cater_build_scmore_grn(..., strict_upstream = TRUE)` verifies the installed package `RemoteSha`. Set `strict_upstream = FALSE` only after independently validating a different upstream revision.
+`strict_upstream = TRUE` verifies the installed GitHub `RemoteSha`.
 
-## Exact scMORE computation retained
+## Upstream calculation preserved
 
-For each cell-type subset, CATER-MR calls:
+For each cell-type subset, CATER-MR calls `scMORE::createRegulon()` with its audited public defaults:
 
 ```r
-scMORE::createRegulon(
-  single_cell,
-  n_targets = 5,
-  peak2gene_method = "Signac",
-  infer_method = "glm",
-  tss_upstream = 100000,
-  tss_downstream = 0,
-  exclude_exon_regions = TRUE
+n_targets = 5
+peak2gene_method = "Signac"
+infer_method = "glm"
+tss_upstream = 100000
+tss_downstream = 0
+exclude_exon_regions = TRUE
+```
+
+If `conserved_regions` is omitted, CATER-MR deliberately does not pass the argument, allowing scMORE itself to evaluate its `phastConsElements20Mammals.UCSC.hg38` default.
+
+The upstream sequence remains:
+
+```text
+FindVariableFeatures(RNA)
+ -> Pando::initiate_grn()
+ -> Pando::find_motifs()
+ -> Pando::infer_grn()
+ -> Pando::find_modules()
+ -> Pando::NetworkModules()
+ -> scMORE internal extract_grn()
+ -> n_targets TF filter
+```
+
+No Pando regression, motif score, module statistic, P value, correlation, or gain is recalculated in CATER-MR.
+
+## Gene coordinates
+
+CATER-MR requires one genomic TSS for every TF and target node because target cis and parent-TF loci are defined around those TSS values.
+
+By default the adapter derives:
+
+```text
+symbol  chr  tss
+```
+
+from `Signac::Annotation(single_cell[["peaks"]])` using strand-aware TSS:
+
+\[
+TSS=
+\begin{cases}
+start,& strand=+\\
+end,& strand=-
+\end{cases}
+\]
+
+If a symbol maps to multiple distinct chromosome/TSS values, the adapter stops rather than silently choosing one transcript. In that case provide an explicit gene-level annotation:
+
+```r
+gene_annotation = data.frame(
+  symbol = ...,
+  chr = ...,
+  tss = ...
 )
 ```
 
-When `conserved_regions` is not explicitly supplied, CATER-MR omits that argument so scMORE evaluates its own upstream default `phastConsElements20Mammals.UCSC.hg38`.
+The strict default also errors if a CATER edge lacks TF or target coordinates. `missing_coordinate="drop"` is available only as an explicit opt-in and records the number of discarded edges.
 
-Inside the audited upstream function the sequence is:
+## Genome-build safeguard
 
-```text
-Seurat::FindVariableFeatures(assay = "RNA")
-    -> Pando::initiate_grn(
-         peak_assay = "peaks",
-         rna_assay = "RNA",
-         exclude_exons = exclude_exon_regions,
-         regions = conserved_regions)
-    -> Pando::find_motifs(
-         pfm = scMORE motifs,
-         genome = BSgenome.Hsapiens.UCSC.hg38)
-    -> Pando::infer_grn(
-         peak_to_gene_method = peak2gene_method,
-         method = infer_method,
-         upstream = tss_upstream,
-         downstream = tss_downstream,
-         alpha = 0.5,
-         family = "gaussian",
-         adjust_method = "fdr",
-         scale = FALSE,
-         verbose = TRUE)
-    -> Pando::find_modules(
-         p_thresh = 0.1,
-         nvar_thresh = 2,
-         min_genes_per_module = 1,
-         rsq_thresh = 0.05)
-    -> Pando::NetworkModules()
-    -> scMORE internal extract_grn()
-    -> retain TFs with at least n_targets GRN rows
+scMORE motif inference uses `BSgenome.Hsapiens.UCSC.hg38`. Therefore explicitly annotated non-hg38 builds are rejected. If annotation genome metadata is absent, the build is recorded as unknown rather than guessed; the user remains responsible for ensuring the processed object is GRCh38/hg38.
+
+## Self loops
+
+`TF == Target` rows are preserved in raw scMORE evidence but are removed from the default CATER-ready graph:
+
+```r
+drop_self_loops = TRUE
 ```
 
-CATER-MR does not change these fixed internal values.
-
-## Required Seurat object state
-
-The processed multiome Seurat object must satisfy scMORE's actual code assumptions:
-
-- human GRCh38/hg38 data;
-- RNA assay named exactly `RNA`;
-- chromatin assay named exactly `peaks`;
-- the `peaks` ChromatinAssay already has gene annotation assigned with `Annotation(object[["peaks"]])`;
-- cell-type labels are available either in a metadata column or in `Idents(object)`.
-
-The adapter intentionally does not rename assays, normalize RNA, rebuild peaks, add annotations, or alter the object silently.
+A self locus is the target's own cis locus, not an independent one-hop upstream trans locus. Keeping it as a CATER parent TF would add no new trans region and could complicate sibling-path interpretation.
 
 ## Usage
 
 ```r
 source("SCMORE_GRN.R")
+source("CATER_MR.R")
 
-scmore_grns <- cater_build_scmore_grn(
+fit <- cater_build_scmore_grn(
   single_cell = A,
   celltype_col = "cell_type",
   outdir = "scMORE_celltype_GRN"
 )
 
-scmore_grns$summary
+microglia_grn <- cater_get_scmore_grn(fit, "Microglia")
 ```
 
-Use one fitted cell-type GRN in the CATER estimator:
+`microglia_grn` is already a valid CATER-MR input, including coordinates:
 
 ```r
-source("CATER_MR.R")
-
-microglia_grn <- cater_get_scmore_grn(
-  scmore_grns,
-  cell_type = "Microglia"
-)
-
 res <- cater_mr(
   grn = microglia_grn,
   eqtl_dir = "/data/microglia/full_eqtl",
   outcome = outcome_gwas,
-  gene_annotation = gene_annotation,
   ld_bfile = "/data/ld/microglia_donors",
   cell_type = "Microglia",
   trait = "Disease"
 )
 ```
 
-To fit only selected populations:
-
-```r
-scmore_grns <- cater_build_scmore_grn(
-  A,
-  celltype_col = "cell_type",
-  cell_types = c("Microglia", "Astrocyte")
-)
-```
-
-If `celltype_col = NULL`, the function uses `Idents(A)`.
+No separate `gene_annotation` argument is required in this path because `cater_mr()` extracts coordinates from `TF_chr/TF_tss/Target_chr/Target_tss`.
 
 ## Returned object
 
-`cater_build_scmore_grn()` returns a `cater_scmore_grn` list containing:
-
 ```text
-grns            # per-cell-type GRN tables; ready for cater_mr()
-scmore_outputs  # raw upstream createRegulon() output for each cell type
-summary         # n_cells / n_edges / n_TFs / n_targets / status
-provenance      # scMORE, Pando, Seurat and Signac versions + upstream SHA
-celltype_source # metadata column or Idents
+grns
+  per-cell-type CATER-ready direct one-hop graphs
+
+edge_evidence
+  raw scMORE GRN evidence rows + cell_type only
+
+scmore_outputs
+  complete raw createRegulon() list for each cell type
+
+gene_annotation
+  standardized symbol/chr/tss table used for the graph contract
+
+summary
+  n_cells
+  n_raw_rows
+  n_unique_scMORE_edges
+  n_cater_edges
+  n_tfs
+  n_targets
+  n_self_loops_dropped
+  n_missing_coordinate_edges
+  status
+
+provenance
+celltype_source
+gene_annotation_source
 createRegulon_args
 mode
 ```
 
-The raw upstream object is preserved separately. The `grns` tables only add a `cell_type` metadata column; `TF`, `Target`, `Regions`, and `Pval`/`Corr`/`Gain` are not recalculated.
-
-## Failure semantics
-
-Default behavior is strict:
+Retrieve other layers with:
 
 ```r
-on_error = "stop"
+cater_get_scmore_grn(fit, "Microglia")                  # CATER-ready graph
+cater_get_scmore_grn(fit, "Microglia", evidence=TRUE)   # raw edge evidence table
+cater_get_scmore_grn(fit, "Microglia", raw=TRUE)        # full createRegulon output
 ```
 
-If one cell type fails inside scMORE/Pando, CATER-MR stops and exposes the original error. It never substitutes another GRN algorithm.
+## Output files
 
-For large atlases, explicit partial collection is available:
+For each cell type, filenames include a deterministic unique suffix so labels that sanitize to the same text cannot overwrite each other.
 
-```r
-on_error = "record"
+```text
+scMORE_raw_<celltype>__NNN.rds
+scMORE_edge_evidence_<celltype>__NNN.tsv
+CATER_grn_<celltype>__NNN.tsv
+CATER_gene_annotation.tsv
+scMORE_grn_summary.tsv
+scMORE_provenance.rds
 ```
 
-Failed cell types are then marked `SCMORE_FAILED` in the summary and have no GRN object.
+Empty scMORE GRNs are recorded as `EMPTY_GRN` rather than causing a scalar-column assignment error. Recorded upstream error messages are sanitized before TSV output.
 
-Cell types are processed sequentially. No outer parallel layer is added because Pando/scMORE may perform expensive internal work and nested parallelism can amplify memory use.
+## What CATER-MR ultimately consumes
 
-## Important upstream implementation boundary
+For a target `X`, only direct edges in the generated graph are used:
 
-The audited `createRegulon()` documentation mentions several inference methods, but the current upstream internal `extract_grn()` contains explicit extraction branches for:
+\[
+P_1(X)=\{T:(T\to X)\in E_c\}.
+\]
 
-- `glm`;
-- `cv.glmnet` / `glmnet`;
-- `xgb`.
+Then the estimator constructs:
 
-Other `infer_method` values currently reach the upstream `Invalid inference method` branch during extraction. CATER-MR deliberately does not patch this behavior; it forwards the requested method to scMORE unchanged.
+\[
+\mathcal R_X=L_X\cup\bigcup_{T\in P_1(X)}L_T,
+\]
 
-## Why CTS/GWAS-based scMORE filtering is not used here
+queries the target's own full-summary eQTL in these regions, and performs one target-level Manc-COJO selection. The scMORE peak regions are biological evidence for how the direct edge was inferred; they are **not** substituted for the TF genomic locus used by CATER-MR.
 
-The top-level scMORE trait workflow integrates cell-type specificity with GWAS/MAGMA-derived gene relevance. That is appropriate for scMORE's trait-regulon objective, but using outcome-derived information to decide which CATER-MR trans loci or GRN edges enter MR would make instrument/network selection outcome-informed.
-
-Therefore the CATER-MR GRN-construction layer stops at the outcome-independent `createRegulon()` output. Any later use of scMORE CTS/TRS should be treated as external annotation or sensitivity analysis, not as the primary CATER instrument-selection gate.
+That distinction is the reason the adapter outputs both raw scMORE evidence and a separate direct, coordinate-complete CATER graph.
