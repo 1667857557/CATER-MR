@@ -14,8 +14,13 @@ jobs:
       - name: Parse R scripts
         run: |
           Rscript -e "parse(file='CATER_MR.R')"
+          Rscript -e "parse(file='CATER_EQTL_INPUT.R')"
           Rscript -e "parse(file='SCMORE_GRN.R')"
       - name: Run core estimator smoke tests
         run: Rscript tests/smoke.R
+      - name: Run v0.6 hardening tests
+        run: Rscript tests/v06_hardening_smoke.R
+      - name: Run combined eQTL input tests
+        run: Rscript tests/eqtl_table_input_smoke.R
       - name: Run scMORE-to-CATER GRN contract tests
         run: Rscript tests/scmore_contract_smoke.R
