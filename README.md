@@ -4,7 +4,7 @@
 
 CATER-MR is a target-centric framework that augments conventional cis molecular/drug-target MR with biologically constrained trans-eQTL signals from **one-hop upstream TF loci** in a cell-type-specific GRN.
 
-## V0.4 design
+## V0.5 design
 
 The implementation follows the current Occam-style design:
 
@@ -15,7 +15,7 @@ cell-type-specific GRN
     -> independent cis + GRN-trans signals
     -> allele-aligned IVW/GIVW
     -> TF exact-IV mechanism annotation
-    -> same-IV one-hop sibling pleiotropy screen
+    -> complete same-IV one-hop sibling pleiotropy screen
     -> local MVMR only when measured bypass pleiotropy is detected
     -> BH-FDR across target genes
 ```
@@ -225,6 +225,8 @@ Q_{TZ}
 
 For one SNP this is exactly the squared Wald z-statistic. BH-FDR is applied across the one-hop sibling candidate set for each target.
 
+The screen is **coverage-aware**. For every sibling CATER-MR records the number of requested actual trans IVs, the number successfully queried and allele-aligned, and the number missing. A sibling is considered completely screened only when every requested IV is available and the omnibus test is numerically valid. A significant partial test can still identify a bypass and trigger MVMR, but partial or failed coverage can never be interpreted as evidence that the remaining pathway is clean.
+
 This direct same-IV test is intentionally used instead of requiring the sibling gene to select the identical COJO sentinel: an IV can affect a sibling through LD even when the sibling's own conditional analysis selects a different lead SNP.
 
 ## Triggered local MVMR
@@ -257,41 +259,84 @@ where the exposure matrix contains `X` and active siblings only. Parent TF is no
 
 ### Conditional-F safeguard
 
-Because all gene-eQTL summaries within a cell type can come from the same donors, the errors in SNP-exposure estimates are correlated across exposures. Correct MVMR conditional F therefore requires this covariance.
-
-CATER-MR accepts an optional named `exposure_corr` matrix. For SNP \(j\):
+Because gene-eQTL summaries within a cell type can come from the same donors, the errors in SNP-exposure estimates are correlated across exposures. With residual LD between instruments, the covariance also extends across SNPs. CATER-MR therefore uses the separable working covariance
 
 \[
-Cov(\hat\beta_{j,k},\hat\beta_{j,l})
+\operatorname{Cov}(\hat\gamma_k,\hat\gamma_l)
 \approx
-\rho_{kl}SE_{jk}SE_{jl}.
+\rho_{kl}D_k R D_l,
 \]
+
+where \(D_k=\operatorname{diag}(SE_{1k},\ldots,SE_{mk})\). `exposure_corr` is the named matrix containing \(\rho_{kl}\), and is validated for names, symmetry, unit diagonal and positive semidefiniteness.
+
+For exposure \(i\), conditional strength is evaluated from
+
+\[
+r_i(\delta)=\hat\gamma_i-\hat\Gamma_{-i}\delta,
+\]
+
+with residual covariance
+
+\[
+\Omega_i(\delta)
+=
+\sum_{k,l}q_kq_l\,\rho_{kl}D_kRD_l,
+\qquad
+q_i=1,\;q_{-i}=-\delta.
+\]
+
+The nuisance coefficients are obtained by feasible covariance-weighted GLS under \(\Omega_i(\delta)\), not by an unweighted regression. The reported statistic is
+
+\[
+\boxed{
+F_{cond,i}
+=
+\frac{r_i^T\Omega_i^{-1}r_i}{m-p+1}
+}
+\]
+
+for \(m\) SNPs and \(p\) exposures. The \(m-p+1\) denominator is the residual degrees of freedom after fitting the \(p-1\) nuisance exposure-association vectors.
 
 A network estimate becomes **primary-eligible** only when:
 
 - `exposure_corr` is supplied;
+- the covariance-weighted conditional-F iteration converges;
 - target conditional F is at least `min_cond_F` (default 10);
-- MVMR information matrix is full rank;
-- condition number is below `mvmr_max_condition`;
-- residual selected-IV \(r^2\) is below `mvmr_max_r2`.
+- the LD-weighted exposure design is full rank;
+- its condition number is below `mvmr_max_condition`.
 
-Without exposure covariance, the network coefficient may still be reported as sensitivity output, but CATER-MR does not pretend that the zero-covariance conditional F is definitive.
+`mvmr_max_r2` is now an **optional** user-specified sensitivity gate and defaults to `NULL`. Residual LD is already represented explicitly by signed \(R\) in GLS, so CATER-MR no longer imposes an arbitrary default \(r^2<0.01\) rule on an LD-aware estimator.
+
+Without exposure covariance, the network coefficient may still be reported as sensitivity output, but CATER-MR does not promote it to the primary result.
 
 ## Diagnostics
 
 For each target CATER-MR reports:
 
-- number of candidate and selected cis/trans SNPs;
+- number of COJO-selected cis/trans signals **before** outcome harmonization;
+- number of LD-allele-aligned signals and final MR-usable cis/trans IVs;
 - `min_F`, `mean_F`, `effective_F`;
 - trans information fraction;
 - TF-anchor evidence;
-- one-hop sibling pleiotropy results;
+- one-hop sibling pleiotropy results, requested/tested/missing actual-IV counts, and screen completeness;
 - cis/trans heterogeneity;
 - per-TF-locus incremental information;
 - leave-one-TF-locus-out effect change;
-- local-MVMR rank, condition number and conditional F where available.
+- local-MVMR status, rank, weighted-design condition number, conditional F/convergence, IV-union coverage and residual maximum \(r^2\) where available.
 
 Outcome-based quantities are never used to select trans instruments or sibling exposures.
+
+### Primary-result semantics
+
+Trans evidence is promoted conservatively:
+
+- no trans IVs: use the cis estimate when available;
+- trans IVs with a **complete** sibling screen and no detected bypass: the combined CATER estimate can be primary;
+- detected bypass: use an identifiable/strong local network MVMR; otherwise fall back to cis;
+- sibling screen disabled or incomplete: fall back to cis when available;
+- detected/unexcluded trans pleiotropy with no valid cis fallback: leave `primary_model`, `primary_beta`, `primary_se`, `primary_p`, and therefore `primary_q` unset.
+
+Thus a deliberately unresolved combined/trans sensitivity estimate remains in `cater_mr_results.tsv` but is never silently copied into the primary fields.
 
 ## Multiple testing
 
@@ -361,7 +406,10 @@ NO_HARMONIZED_IV
 LD_SINGULAR
 TRANS_PLEIOTROPY_UNRESOLVED
 TRANS_PLEIOTROPY_UNRESOLVED_NO_CIS
-SIBLING_QTL_INCOMPLETE
+TRANS_UNSCREENED_CIS_FALLBACK
+TRANS_UNSCREENED_NO_CIS
+SIBLING_SCREEN_INCOMPLETE_CIS_FALLBACK
+SIBLING_SCREEN_INCOMPLETE_NO_CIS
 OK_CIS_ONLY
 OK_CATER
 OK_NETWORK_ADJUSTED
@@ -369,7 +417,7 @@ OK_NETWORK_ADJUSTED
 
 ## Design validation
 
-`tests/smoke.R` checks mathematical invariants without requiring Manc-COJO itself, including:
+`tests/smoke.R` checks mathematical invariants and regression failure modes without requiring Manc-COJO itself, including:
 
 - one-hop region assignment;
 - Manc-COJO LD block parsing;
@@ -378,11 +426,16 @@ OK_NETWORK_ADJUSTED
 - \(F_{\mathrm{eff}}\) reduction to mean F when \(R=I\);
 - one-SNP sibling omnibus reduction to \(z^2\);
 - cis/trans heterogeneity under equal slopes;
+- trans-only information fraction equals 1 rather than `NA`;
+- covariance-weighted conditional F differs from unweighted OLS when standard errors differ;
+- conditional F uses signed LD and residual degrees of freedom `m-p+1`;
+- partial actual-IV sibling coverage is marked incomplete;
+- unresolved or incompletely screened trans sensitivity estimates never populate `primary_*`;
 - exact recovery of known coefficients in a deterministic local-MVMR example.
 
 ## Scope deliberately not added
 
-V0.4 still does not make the following default components:
+V0.5 still does not make the following default components:
 
 - two-hop/recursive network expansion;
 - parent-TF MVMR exposure;
