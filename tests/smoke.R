@@ -53,7 +53,8 @@ stopifnot(abs(om["Q"]-16)<1e-10,om["df"]==1)
 
 # Cis/trans heterogeneity is zero when both ratios are identical.
 h <- g; h$by <- .5*h$bx
-ht <- .cater_cis_trans_het(h,diag(2))
+R2 <- diag(2); dimnames(R2) <- list(h$snp,h$snp)
+ht <- .cater_cis_trans_het(h,R2)
 stopifnot(abs(ht["z"])<1e-10,abs(ht["p"]-1)<1e-10)
 
 # Deterministic local MVMR recovers known coefficients.
@@ -62,7 +63,8 @@ colnames(B) <- c("X","Z")
 theta <- c(X=.5,Z=.6)
 by <- as.numeric(B %*% theta)
 seB <- matrix(.02,nrow(B),ncol(B),dimnames=dimnames(B))
-mf <- .cater_mvmr_fit(B,seB,by,rep(.02,nrow(B)),diag(nrow(B)),c("X","Z"),diag(2))
+Cexp <- diag(2); dimnames(Cexp) <- list(c("X","Z"),c("X","Z"))
+mf <- .cater_mvmr_fit(B,seB,by,rep(.02,nrow(B)),diag(nrow(B)),c("X","Z"),Cexp)
 stopifnot(mf$status=="OK",abs(mf$beta["X"]-.5)<1e-10,abs(mf$beta["Z"]-.6)<1e-10)
 
 cat("CATER-MR v0.4 math smoke tests passed\n")
