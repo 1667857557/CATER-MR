@@ -57,7 +57,66 @@ R2 <- diag(2); dimnames(R2) <- list(h$snp,h$snp)
 ht <- .cater_cis_trans_het(h,R2)
 stopifnot(abs(ht["z"])<1e-10,abs(ht["p"]-1)<1e-10)
 
-# Deterministic local MVMR recovers known coefficients.
+# Trans-only analyses have 100% trans information rather than NA.
+empty_cis <- .cater_givw(g[FALSE,,drop=FALSE],matrix(numeric(),0,0))
+trans_fit <- .cater_givw(g[g$source=="trans",,drop=FALSE],matrix(1,1,1))
+stopifnot(abs(.cater_trans_information_fraction(empty_cis,trans_fit)-1)<1e-12)
+
+# Conditional F uses covariance-weighted nuisance regression, cross-SNP LD, and residual df m-p+1.
+Bc <- cbind(X=c(.20,.10,.40,.05), Z=c(.10,.20,.10,.30))
+SEc <- cbind(X=c(.01,.10,.01,.20), Z=rep(.05,4))
+Cexp <- diag(2); dimnames(Cexp) <- list(c("X","Z"),c("X","Z"))
+Rc <- diag(4)
+cf_ind <- .cater_conditional_f(Bc,SEc,Rc,c("X","Z"),Cexp)
+ols_delta <- as.numeric(stats::lm.fit(Bc[,"Z",drop=FALSE],Bc[,"X"])$coefficients)
+cf_delta <- attr(cf_ind,"delta")$X
+stopifnot(isTRUE(attr(cf_ind,"converged")["X"]),attr(cf_ind,"df")["X"]==3L)
+stopifnot(abs(cf_delta-ols_delta)>0.1)
+r <- Bc[,"X"]-Bc[,"Z"]*cf_delta
+qv <- c(1,-cf_delta)
+V <- .cater_residual_exposure_cov(SEc,Rc,qv,Cexp)
+Qmanual <- as.numeric(crossprod(r,solve(V,r)))
+stopifnot(abs(cf_ind["X"]-Qmanual/3)<1e-8)
+Rc_ld <- matrix(c(1,.2,0,0,.2,1,.1,0,0,.1,1,.3,0,0,.3,1),4,4,byrow=TRUE)
+cf_ld <- .cater_conditional_f(Bc,SEc,Rc_ld,c("X","Z"),Cexp)
+stopifnot(isTRUE(attr(cf_ld,"converged")["X"]),abs(cf_ld["X"]-cf_ind["X"])>1e-4)
+
+# Partial same-IV sibling coverage is explicitly incomplete even when the tested subset is significant.
+td <- tempfile("cater_sib_"); dir.create(td)
+zss <- data.frame(SNP="g1",CHR=1,BP=100,A1="A",A2="G",EAF=.2,BETA=.20,SE=.02,P=1e-20,N=500)
+con <- gzfile(file.path(td,"Z.txt.gz"),"wt")
+utils::write.table(zss,con,sep="\t",quote=FALSE,row.names=FALSE); close(con)
+hs <- data.frame(snp=c("g1","g2"),source="trans",parent_tf="TF1",locus_id="TF:TF1")
+gs <- data.frame(TF=c("TF1","TF1"),Target=c("X","Z"))
+rs <- data.frame(snp=c("g1","g2"),ld_a1="A",ld_a2="G")
+Ls <- diag(2); dimnames(Ls) <- list(c("g1","g2"),c("g1","g2"))
+sib <- .cater_sibling_screen("X",hs,gs,rs,Ls,td,500,0.05)
+stopifnot(sib$n_candidate==1L,sib$n_incomplete==1L,sib$n_iv_missing==1L,!sib$complete)
+stopifnot(sib$table$n_iv_requested==2L,sib$table$n_iv_tested==1L,
+          sib$table$status=="PARTIAL_SNP_COVERAGE",isTRUE(sib$table$active))
+unlink(td,recursive=TRUE)
+
+# Unresolved or incompletely screened trans estimates never populate primary_*.
+mkfit <- function(status,beta=.2,se=.05,p=.01,n_iv=2L,information=10)
+  data.frame(n_iv=n_iv,beta=beta,se=se,p=p,Q=NA,Q_p=NA,information=information,
+             effective_F=NA,mean_F=NA,min_F=NA,status=status)
+fits0 <- list(cis=mkfit("NO_IV",n_iv=0L,information=NA),trans=mkfit("OK"),combined=mkfit("OK"))
+dec0 <- .cater_primary_decision(fits0,has_trans=TRUE,sibling_screen_performed=TRUE,
+                                sibling_screen_complete=TRUE,n_active_siblings=1L)
+stopifnot(is.na(dec0$model),is.na(dec0$p),dec0$status=="TRANS_PLEIOTROPY_UNRESOLVED_NO_CIS")
+dec1 <- .cater_primary_decision(fits0,has_trans=TRUE,sibling_screen_performed=TRUE,
+                                sibling_screen_complete=FALSE,n_active_siblings=0L)
+stopifnot(is.na(dec1$model),is.na(dec1$p),dec1$status=="SIBLING_SCREEN_INCOMPLETE_NO_CIS")
+fits1 <- fits0; fits1$cis <- mkfit("OK",beta=.11,p=.02)
+dec2 <- .cater_primary_decision(fits1,has_trans=TRUE,sibling_screen_performed=TRUE,
+                                sibling_screen_complete=FALSE,n_active_siblings=0L)
+stopifnot(dec2$model=="cis",abs(dec2$beta-.11)<1e-12,
+          dec2$status=="SIBLING_SCREEN_INCOMPLETE_CIS_FALLBACK")
+dec3 <- .cater_primary_decision(fits1,has_trans=TRUE,sibling_screen_performed=FALSE,
+                                sibling_screen_complete=FALSE,n_active_siblings=0L)
+stopifnot(dec3$model=="cis",dec3$status=="TRANS_UNSCREENED_CIS_FALLBACK")
+
+# Deterministic local MVMR recovers known coefficients and conditional-F diagnostics converge.
 B <- rbind(c(.20,.00),c(.10,.15),c(.00,.20),c(.12,.05))
 colnames(B) <- c("X","Z")
 theta <- c(X=.5,Z=.6)
@@ -66,5 +125,6 @@ seB <- matrix(.02,nrow(B),ncol(B),dimnames=dimnames(B))
 Cexp <- diag(2); dimnames(Cexp) <- list(c("X","Z"),c("X","Z"))
 mf <- .cater_mvmr_fit(B,seB,by,rep(.02,nrow(B)),diag(nrow(B)),c("X","Z"),Cexp)
 stopifnot(mf$status=="OK",abs(mf$beta["X"]-.5)<1e-10,abs(mf$beta["Z"]-.6)<1e-10)
+stopifnot(isTRUE(mf$conditional_F_converged["X"]),mf$conditional_F_df["X"]==3L)
 
-cat("CATER-MR v0.4 math smoke tests passed\n")
+cat("CATER-MR v0.5 core-estimator regression tests passed\n")
