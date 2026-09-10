@@ -80,4 +80,14 @@ badN<-good;badN$eqtl_n_unit<-"cells";stopifnot(inherits(try(.cater_validate_inpu
 badF<-good;badF$eqtl_full_summary<-FALSE;stopifnot(inherits(try(.cater_validate_input_manifest(badF,TRUE),silent=TRUE),"try-error"))
 badB<-good;badB$ld_build<-"GRCh37";stopifnot(inherits(try(.cater_validate_input_manifest(badB,TRUE),silent=TRUE),"try-error"))
 
-cat("CATER-MR v0.6 evidence-safe hardening tests passed\n")
+
+# 11. Direct-core Occam semantics: no qtl-outcome-overlap field and cis is the default primary anchor.
+manifest_occam <- .cater_validate_input_manifest(good, TRUE)
+stopifnot(!"qtl_outcome_overlap" %in% names(manifest_occam))
+fits_occam <- list(cis=mkfit("OK",b=.11,se=.04,p=.01),trans=mkfit("OK"),combined=mkfit("OK",b=.20,se=.03,p=.001))
+d_occam <- .cater_primary_decision(fits_occam,has_trans=TRUE,sibling_screen_performed=TRUE,
+                                   sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE)
+stopifnot(d_occam$model=="cis",d_occam$status=="OK_CIS_ANCHOR_PRIMARY")
+stopifnot("primary_policy" %in% names(formals(cater_mr)))
+
+cat("CATER-MR direct-core evidence-safety tests passed\n")

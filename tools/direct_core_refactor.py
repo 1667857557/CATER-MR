@@ -118,7 +118,7 @@ if cf is not None:
 
 # Reframe the same-IV sibling test as co-perturbation detection.  `active` is
 # retained as an internal compatibility alias for MVMR triggering.
-old = '''  tab$active<-is.finite(tab$q)&tab$q<sibling_fdr
+old = '''  tab$active <- is.finite(tab$q)&tab$q<sibling_fdr
   list(table=tab,active=tab$sibling[tab$active],n_candidate=nrow(tab),n_incomplete=sum(!tab$complete),n_qtl_missing=qtl_missing,n_iv_missing=sum(tab$n_iv_missing),complete=all(tab$complete),testable=any(tab$testable),status=if(all(tab$complete))"COMPLETE" else "INCOMPLETE")
 '''
 new = '''  tab$co_perturbation_detected<-is.finite(tab$q)&tab$q<sibling_fdr

@@ -15,8 +15,8 @@ cell-type-specific GRN
     -> independent cis + GRN-trans signals
     -> allele-aligned IVW/GIVW
     -> TF exact-IV mechanism annotation
-    -> complete same-IV one-hop sibling pleiotropy screen
-    -> local MVMR only when measured bypass pleiotropy is detected
+    -> complete same-IV one-hop sibling co-perturbation screen
+    -> local MVMR sensitivity analysis only when measured sibling co-perturbation is detected
     -> BH-FDR across target genes
 ```
 
@@ -195,7 +195,7 @@ For each selected GRN-trans IV `G` assigned to parent TF `T`, CATER-MR queries t
 
 This is a mechanism/evidence annotation, not a hard instrument gate. Target-level BH-FDR is applied across tested TF-anchor pairs.
 
-## Same-IV one-hop pleiotropy screen
+## Same-IV one-hop sibling co-perturbation screen
 
 For each actual selected trans IV \(G\) from a parent-TF locus, CATER-MR asks whether the **same IV** affects other direct targets of that TF.
 
@@ -225,15 +225,13 @@ Q_{TZ}
 
 For one SNP this is exactly the squared Wald z-statistic. BH-FDR is applied across the one-hop sibling candidate set for each target.
 
-The screen is **coverage-aware**. For every sibling CATER-MR records the number of requested actual trans IVs, the number successfully queried and allele-aligned, and the number missing. A sibling is considered completely screened only when every requested IV is available and the omnibus test is numerically valid. A significant partial test can still identify a bypass and trigger MVMR, but partial or failed coverage can never be interpreted as evidence that the remaining pathway is clean.
+The screen is **coverage-aware**. For every sibling CATER-MR records the number of requested actual trans IVs, the number successfully queried and allele-aligned, and the number missing. A sibling is considered completely screened only when every requested IV is available and the omnibus test is numerically valid. A significant partial test can still identify measured sibling co-perturbation and trigger MVMR, but a non-significant test is only "no detected co-perturbation"; it is not proof of the MR exclusion restriction. Partial or failed coverage can never be interpreted as evidence that the remaining pathway is clean.
 
 This direct same-IV test is intentionally used instead of requiring the sibling gene to select the identical COJO sentinel: an IV can affect a sibling through LD even when the sibling's own conditional analysis selects a different lead SNP.
 
 ## Triggered local MVMR
 
-MVMR is not run by default.
-
-It is triggered only if the exposure-side sibling screen detects at least one measured bypass gene.
+MVMR is triggered only if the exposure-side sibling screen detects at least one measured co-perturbed sibling. It remains a standard LD-aware GLS-MVMR sensitivity analysis and is not interpreted as a complete correction for unmeasured pleiotropy, weak-instrument bias, or sample overlap.
 
 For active siblings:
 
@@ -297,7 +295,7 @@ F_{cond,i}
 
 for \(m\) SNPs and \(p\) exposures. The \(m-p+1\) denominator is the residual degrees of freedom after fitting the \(p-1\) nuisance exposure-association vectors.
 
-A network estimate becomes **primary-eligible** only when:
+For the MVMR sensitivity estimate, CATER-MR reports the following identification diagnostics:
 
 - `exposure_corr` is supplied;
 - the covariance-weighted conditional-F iteration converges;
@@ -307,7 +305,7 @@ A network estimate becomes **primary-eligible** only when:
 
 `mvmr_max_r2` is now an **optional** user-specified sensitivity gate and defaults to `NULL`. Residual LD is already represented explicitly by signed \(R\) in GLS, so CATER-MR no longer imposes an arbitrary default \(r^2<0.01\) rule on an LD-aware estimator.
 
-Without exposure covariance, the network coefficient may still be reported as sensitivity output, but CATER-MR does not promote it to the primary result.
+The network coefficient is reported as sensitivity output. `exposure_corr` is used for conditional-strength assessment; it does not turn the standard GLS point estimator into a weak-instrument or sample-overlap bias-corrected estimator.
 
 ## Diagnostics
 
@@ -331,8 +329,9 @@ Outcome-based quantities are never used to select trans instruments or sibling e
 Trans evidence is promoted conservatively:
 
 - no trans IVs: use the cis estimate when available;
-- trans IVs with a **complete** sibling screen and no detected bypass: the combined CATER estimate can be primary;
-- detected bypass: use an identifiable/strong local network MVMR; otherwise fall back to cis;
+- default `primary_policy="cis_anchor"`: use cis MR as the primary anchor whenever a valid cis estimate is available;
+- `primary_policy="screened_cater"` is an explicit research opt-in: a complete screen with no detected sibling co-perturbation can promote the combined estimate;
+- detected sibling co-perturbation: keep cis as primary when available and report local MVMR as sensitivity;
 - sibling screen disabled or incomplete: fall back to cis when available;
 - detected/unexcluded trans pleiotropy with no valid cis fallback: leave `primary_model`, `primary_beta`, `primary_se`, `primary_p`, and therefore `primary_q` unset.
 
