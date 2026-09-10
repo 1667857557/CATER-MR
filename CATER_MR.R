@@ -1,6 +1,6 @@
-# CATER-MR v0.4
+# CATER-MR v0.5
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
-# Target-centric Manc-COJO + GIVW + same-IV pleiotropy screen + triggered local MVMR.
+# Target-centric Manc-COJO + GIVW + complete same-IV pleiotropy screen + triggered local MVMR.
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -412,8 +412,10 @@
 }
 
 .cater_sibling_screen <- function(target,h,grn,cojo_ref,ld,eqtl_dir,qtl_n,sibling_fdr) {
+  empty<-function() list(table=data.frame(),active=character(),n_candidate=0L,
+    n_incomplete=0L,n_qtl_missing=0L,n_iv_missing=0L,complete=TRUE)
   tr<-h[h$source=="trans",,drop=FALSE]
-  if(!nrow(tr)) return(list(table=data.frame(),active=character(),n_candidate=0L,n_missing=0L))
+  if(!nrow(tr)) return(empty())
   children_x<-unique(grn$Target[grn$TF==target])
   tf_to_snps<-list()
   for(i in seq_len(nrow(tr))) for(tf in strsplit(tr$parent_tf[i],";",fixed=TRUE)[[1L]])
@@ -423,56 +425,122 @@
     sibs<-setdiff(unique(grn$Target[grn$TF==tf]),c(target,children_x))
     for(z in sibs) sib_parents[[z]]<-unique(c(sib_parents[[z]],tf))
   }
-  if(!length(sib_parents)) return(list(table=data.frame(),active=character(),n_candidate=0L,n_missing=0L))
-  out<-list();missing<-0L
+  if(!length(sib_parents)) return(empty())
+  out<-list();qtl_missing<-0L
   for(z in names(sib_parents)){
     tfs<-sib_parents[[z]]
     snps<-unique(unlist(tf_to_snps[tfs],use.names=FALSE))
+    requested<-length(snps)
     d<-.cater_exact_effects(z,snps,eqtl_dir,qtl_n,cojo_ref)
     if(is.null(d)) {
-      missing<-missing+1L
-      out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),n_iv=0,Q=NA,df=NA,p=NA,status="QTL_NOT_AVAILABLE")
+      qtl_missing<-qtl_missing+1L
+      out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),
+        n_iv_requested=requested,n_iv_tested=0L,n_iv_missing=requested,
+        Q=NA,df=NA,p=NA,status="QTL_NOT_AVAILABLE",complete=FALSE)
       next
     }
     d<-d[match(intersect(snps,d$snp),d$snp),,drop=FALSE]
-    if(!nrow(d)){
-      out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),n_iv=0,Q=NA,df=NA,p=NA,status="SNP_NOT_AVAILABLE")
+    tested<-nrow(d);missing_iv<-requested-tested
+    if(!tested){
+      out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),
+        n_iv_requested=requested,n_iv_tested=0L,n_iv_missing=requested,
+        Q=NA,df=NA,p=NA,status="SNP_NOT_AVAILABLE",complete=FALSE)
       next
     }
     R<-.cater_subset_ld(ld,d$snp); om<-.cater_omnibus(d$beta,d$se,R)
-    out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),n_iv=nrow(d),
-                         Q=om["Q"],df=om["df"],p=om["p"],status=if(is.finite(om["p"]))"OK" else "TEST_FAILED")
+    test_ok<-is.finite(om["p"])
+    status<-if(missing_iv>0L) {
+      if(test_ok) "PARTIAL_SNP_COVERAGE" else "PARTIAL_TEST_FAILED"
+    } else if(test_ok) "OK" else "TEST_FAILED"
+    out[[z]]<-data.frame(sibling=z,parent_tf=paste(sort(tfs),collapse=";"),
+      n_iv_requested=requested,n_iv_tested=tested,n_iv_missing=missing_iv,
+      Q=om["Q"],df=om["df"],p=om["p"],status=status,
+      complete=(missing_iv==0L&&test_ok))
   }
   tab<-do.call(rbind,out);rownames(tab)<-NULL
   tab$q<-NA_real_;ii<-which(is.finite(tab$p));if(length(ii)) tab$q[ii]<-p.adjust(tab$p[ii],method="BH")
   tab$active<-is.finite(tab$q)&tab$q<sibling_fdr
-  list(table=tab,active=tab$sibling[tab$active],n_candidate=nrow(tab),n_missing=missing)
+  list(table=tab,active=tab$sibling[tab$active],n_candidate=nrow(tab),
+       n_incomplete=sum(!tab$complete),n_qtl_missing=qtl_missing,
+       n_iv_missing=sum(tab$n_iv_missing),complete=all(tab$complete))
 }
 
-.cater_conditional_f <- function(B,SE,exposure_names,exposure_corr=NULL) {
-  p<-ncol(B);m<-nrow(B)
-  if(p<2L||m<1L) return(setNames(rep(NA_real_,p),exposure_names))
-  if(!is.null(exposure_corr)){
-    if(is.null(rownames(exposure_corr))||!all(exposure_names%in%rownames(exposure_corr)))
-      .cater_stop("exposure_corr must have named rows/columns covering MVMR exposures")
-    C<-as.matrix(exposure_corr[exposure_names,exposure_names,drop=FALSE])
-  } else C<-diag(p)
-  ans<-rep(NA_real_,p)
-  for(i in seq_len(p)){
-    other<-setdiff(seq_len(p),i)
-    fit<-tryCatch(stats::lm.fit(x=B[,other,drop=FALSE],y=B[,i]),error=function(e)NULL)
-    if(is.null(fit)||any(!is.finite(fit$coefficients))) next
-    delta<-fit$coefficients
-    resid<-B[,i]-as.numeric(B[,other,drop=FALSE]%*%delta)
-    v<-numeric(p);v[i]<--1;v[other]<-delta
-    sig2<-numeric(m)
-    for(j in seq_len(m)){
-      covj<-C*outer(SE[j,],SE[j,])
-      sig2[j]<-as.numeric(t(v)%*%covj%*%v)
-    }
-    if(all(is.finite(sig2)&sig2>0)) ans[i]<-mean(resid^2/sig2)
+.cater_validate_exposure_corr <- function(exposure_corr,exposure_names) {
+  p<-length(exposure_names)
+  if(is.null(exposure_corr)) {
+    C<-diag(p);dimnames(C)<-list(exposure_names,exposure_names);return(C)
   }
-  setNames(ans,exposure_names)
+  C<-as.matrix(exposure_corr)
+  if(!is.numeric(C)||nrow(C)!=ncol(C)||is.null(rownames(C))||is.null(colnames(C))||
+     !all(exposure_names%in%rownames(C))||!all(exposure_names%in%colnames(C)))
+    .cater_stop("exposure_corr must be a named square numeric matrix covering all MVMR exposures")
+  C<-C[exposure_names,exposure_names,drop=FALSE]
+  if(any(!is.finite(C))) .cater_stop("exposure_corr contains non-finite values")
+  if(max(abs(C-t(C)))>1e-8) .cater_stop("exposure_corr must be symmetric")
+  if(any(abs(diag(C)-1)>1e-6)) .cater_stop("exposure_corr must have unit diagonal")
+  if(any(abs(C)>1+1e-8)) .cater_stop("exposure_corr entries must lie in [-1,1]")
+  ev<-eigen((C+t(C))/2,symmetric=TRUE,only.values=TRUE)$values
+  if(min(ev)<-1e-8*max(1,max(abs(ev)))) .cater_stop("exposure_corr must be positive semidefinite")
+  C
+}
+
+.cater_residual_exposure_cov <- function(SE,ld,q,C) {
+  M<-sweep(SE,2,q,"*")
+  V<-(M%*%C%*%t(M))*ld
+  (V+t(V))/2
+}
+
+.cater_conditional_f <- function(B,SE,ld,exposure_names,exposure_corr=NULL,
+                                  max_iter=200L,tol=1e-9) {
+  B<-as.matrix(B);SE<-as.matrix(SE);ld<-as.matrix(ld)
+  p<-ncol(B);m<-nrow(B)
+  if(length(exposure_names)!=p) .cater_stop("exposure_names must match the MVMR exposure columns")
+  if(!all(dim(SE)==dim(B))) .cater_stop("SE must have the same dimensions as B")
+  if(!all(dim(ld)==c(m,m))) .cater_stop("LD must be an m x m signed-correlation matrix")
+  if(any(!is.finite(B))||any(!is.finite(SE))||any(SE<=0))
+    .cater_stop("B/SE supplied to conditional F must be finite with SE > 0")
+  if(any(!is.finite(ld))||max(abs(ld-t(ld)))>1e-8)
+    .cater_stop("LD supplied to conditional F must be finite and symmetric")
+  ans<-setNames(rep(NA_real_,p),exposure_names)
+  df<-m-p+1L
+  if(p<2L||df<=0L) return(ans)
+  C<-.cater_validate_exposure_corr(exposure_corr,exposure_names)
+  qstat<-setNames(rep(NA_real_,p),exposure_names)
+  converged<-setNames(rep(FALSE,p),exposure_names)
+  deltas<-setNames(vector("list",p),exposure_names)
+  iterations<-setNames(rep(NA_integer_,p),exposure_names)
+  for(i in seq_len(p)){
+    other<-setdiff(seq_len(p),i);X<-B[,other,drop=FALSE];y<-B[,i]
+    delta<-tryCatch(stats::lm.fit(x=X,y=y)$coefficients,
+                    error=function(e) rep(0,length(other)))
+    if(length(delta)!=length(other)||any(!is.finite(delta))) delta<-rep(0,length(other))
+    ok<-FALSE
+    for(iter in seq_len(max_iter)){
+      q<-numeric(p);q[i]<-1;q[other]<--delta
+      V<-.cater_residual_exposure_cov(SE,ld,q,C);W<-.cater_inv(V)
+      if(is.null(W)) break
+      A<-crossprod(X,W%*%X);Ai<-.cater_inv(A)
+      if(is.null(Ai)) break
+      delta_new<-as.numeric(Ai%*%crossprod(X,W%*%y))
+      if(any(!is.finite(delta_new))) break
+      scale<-1+max(abs(delta),abs(delta_new))
+      if(max(abs(delta_new-delta))<=tol*scale){delta<-delta_new;ok<-TRUE;iterations[i]<-iter;break}
+      delta<-0.5*delta+0.5*delta_new
+    }
+    if(!ok) next
+    q<-numeric(p);q[i]<-1;q[other]<--delta
+    V<-.cater_residual_exposure_cov(SE,ld,q,C);W<-.cater_inv(V)
+    if(is.null(W)) next
+    r<-y-as.numeric(X%*%delta);Q<-as.numeric(crossprod(r,W%*%r))
+    if(!is.finite(Q)||Q<0) next
+    qstat[i]<-Q;ans[i]<-Q/df;converged[i]<-TRUE;deltas[[i]]<-delta
+  }
+  attr(ans,"Q")<-qstat
+  attr(ans,"df")<-setNames(rep(df,p),exposure_names)
+  attr(ans,"converged")<-converged
+  attr(ans,"delta")<-deltas
+  attr(ans,"iterations")<-iterations
+  ans
 }
 
 .cater_mvmr_fit <- function(B,seB,by,seY,ld,exposure_names,exposure_corr=NULL) {
@@ -480,16 +548,23 @@
   if(m<=p) return(list(status="MVMR_UNDERIDENTIFIED"))
   Dy<-diag(seY,nrow=m);Oy<-Dy%*%ld%*%Dy;invY<-.cater_inv(Oy)
   if(is.null(invY)) return(list(status="MVMR_LD_SINGULAR"))
+  L<-tryCatch(t(chol(Oy)),error=function(e)NULL)
+  if(is.null(L)) return(list(status="MVMR_LD_SINGULAR"))
+  Bw<-forwardsolve(L,B)
+  rankB<-qr(Bw)$rank
+  condB<-if(rankB<p) Inf else kappa(Bw)
+  if(rankB<p) return(list(status="MVMR_RANK_DEFICIENT",rank=rankB,condition=condB))
   info<-t(B)%*%invY%*%B
-  if(qr(info)$rank<p) return(list(status="MVMR_RANK_DEFICIENT",rank=qr(info)$rank,condition=Inf))
-  iv<-.cater_inv(info);if(is.null(iv)) return(list(status="MVMR_RANK_DEFICIENT",rank=qr(info)$rank,condition=Inf))
+  iv<-.cater_inv(info);if(is.null(iv)) return(list(status="MVMR_RANK_DEFICIENT",rank=rankB,condition=condB))
   th<-as.numeric(iv%*%t(B)%*%invY%*%by); names(th)<-exposure_names
   ses<-sqrt(diag(iv)); names(ses)<-exposure_names
   ps<-2*stats::pnorm(-abs(th/ses));names(ps)<-exposure_names
   r<-by-as.numeric(B%*%th);Q<-as.numeric(t(r)%*%invY%*%r)
-  cf<-.cater_conditional_f(B,seB,exposure_names,exposure_corr)
+  cf<-.cater_conditional_f(B,seB,ld,exposure_names,exposure_corr)
   list(status="OK",beta=th,se=ses,p=ps,Q=Q,Q_p=stats::pchisq(Q,m-p,lower.tail=FALSE),
-       rank=qr(info)$rank,condition=kappa(info),conditional_F=cf,
+       rank=rankB,condition=condB,conditional_F=cf,
+       conditional_F_Q=attr(cf,"Q"),conditional_F_df=attr(cf,"df"),
+       conditional_F_converged=attr(cf,"converged"),
        covariance_assumption=if(is.null(exposure_corr))"zero_within_SNP_exposure_covariance" else "user_exposure_corr")
 }
 
@@ -540,12 +615,64 @@
   fit<-.cater_mvmr_fit(B[ok,,drop=FALSE],SE[ok,,drop=FALSE],by,seY,R,exposures,exposure_corr)
   if(fit$status!="OK") return(fit)
   fit$n_iv<-sum(ok)
+  fit$n_union_requested<-length(union)
+  fit$n_union_ld_available<-length(snps)
+  fit$n_union_complete_case<-sum(ok)
   off<-R;diag(off)<-0
   fit$max_r2<-if(length(off)) max(off^2,na.rm=TRUE) else 0
+  ld_gate<-is.null(mvmr_max_r2)||(length(mvmr_max_r2)==1L&&is.finite(mvmr_max_r2)&&
+    is.finite(fit$max_r2)&&fit$max_r2<=mvmr_max_r2)
+  fit$ld_gate_pass<-ld_gate
   fit$primary_eligible<-is.finite(fit$conditional_F[target])&&fit$conditional_F[target]>=min_cond_F&&
-    !is.null(exposure_corr)&&is.finite(fit$condition)&&fit$condition<=mvmr_max_condition&&
-    is.finite(fit$max_r2)&&fit$max_r2<=mvmr_max_r2
+    isTRUE(fit$conditional_F_converged[target])&&!is.null(exposure_corr)&&
+    is.finite(fit$condition)&&fit$condition<=mvmr_max_condition&&ld_gate
   fit
+}
+
+.cater_trans_information_fraction <- function(cis_fit,combined_fit) {
+  Ia<-combined_fit$information
+  if(!is.finite(Ia)||Ia<=0) return(NA_real_)
+  Ic<-cis_fit$information
+  if(isTRUE(cis_fit$n_iv==0L)) Ic<-0
+  if(!is.finite(Ic)) return(NA_real_)
+  max(0,min(1,(Ia-Ic)/Ia))
+}
+
+.cater_primary_decision <- function(fits,net=NULL,target=NULL,has_trans=FALSE,
+                                    sibling_screen_performed=FALSE,
+                                    sibling_screen_complete=TRUE,
+                                    n_active_siblings=0L) {
+  out<-list(model=NA_character_,beta=NA_real_,se=NA_real_,p=NA_real_,status="MR_FAILED")
+  use_fit<-function(model,fit,status){
+    out$model<<-model;out$beta<<-fit$beta;out$se<<-fit$se;out$p<<-fit$p;out$status<<-status
+  }
+  if(!has_trans){
+    if(identical(fits$cis$status,"OK")) use_fit("cis",fits$cis,"OK_CIS_ONLY")
+    else if(identical(fits$combined$status,"OK")) use_fit("cis",fits$combined,"OK_CIS_ONLY")
+    return(out)
+  }
+  if(!isTRUE(sibling_screen_performed)){
+    if(identical(fits$cis$status,"OK")) use_fit("cis",fits$cis,"TRANS_UNSCREENED_CIS_FALLBACK")
+    else out$status<-"TRANS_UNSCREENED_NO_CIS"
+    return(out)
+  }
+  if(!isTRUE(sibling_screen_complete)){
+    if(identical(fits$cis$status,"OK")) use_fit("cis",fits$cis,"SIBLING_SCREEN_INCOMPLETE_CIS_FALLBACK")
+    else out$status<-"SIBLING_SCREEN_INCOMPLETE_NO_CIS"
+    return(out)
+  }
+  if(n_active_siblings>0L){
+    if(!is.null(net)&&identical(net$status,"OK")&&isTRUE(net$primary_eligible)){
+      idx<-if(!is.null(target)&&target%in%names(net$beta)) target else 1L
+      use_fit("network",data.frame(beta=net$beta[idx],se=net$se[idx],p=net$p[idx]),"OK_NETWORK_ADJUSTED")
+    }
+    else if(identical(fits$cis$status,"OK"))
+      use_fit("cis",fits$cis,"TRANS_PLEIOTROPY_UNRESOLVED")
+    else out$status<-"TRANS_PLEIOTROPY_UNRESOLVED_NO_CIS"
+    return(out)
+  }
+  if(identical(fits$combined$status,"OK")) use_fit("combined",fits$combined,"OK_CATER")
+  out
 }
 
 #' Run CATER-MR
@@ -557,9 +684,16 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      cis_window=1e6,tf_window=cis_window,cojo_p=5e-8,cojo_wind_kb=10000L,
                      cojo_collinear=0.9,cojo_threads=1L,qtl_n=NULL,
                      sibling_fdr=0.05,enable_sibling_screen=TRUE,enable_mvmr=TRUE,
-                     exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=0.01,mvmr_max_condition=1e4,
+                     exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=NULL,mvmr_max_condition=1e4,
                      outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE) {
   if(!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s",eqtl_dir)
+  if(!is.null(mvmr_max_r2) && (length(mvmr_max_r2)!=1L || !is.finite(mvmr_max_r2) ||
+                               mvmr_max_r2<0 || mvmr_max_r2>1))
+    .cater_stop("mvmr_max_r2 must be NULL or a single value in [0,1]")
+  if(length(min_cond_F)!=1L||!is.finite(min_cond_F)||min_cond_F<=0)
+    .cater_stop("min_cond_F must be a positive finite scalar")
+  if(length(mvmr_max_condition)!=1L||!is.finite(mvmr_max_condition)||mvmr_max_condition<=1)
+    .cater_stop("mvmr_max_condition must be a finite scalar > 1")
   grn0<-grn;grn<-.cater_standardize_grn(grn)
   ann<-.cater_standardize_annotation(gene_annotation);if(is.null(ann)) ann<-.cater_annotation_from_grn(grn0)
   if(is.null(ann)) .cater_stop("Gene coordinates required via gene_annotation or GRN coordinate columns")
@@ -573,10 +707,15 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
   long<-list();summ<-list()
   empty_summary<-function(x,status) data.frame(cell_type=cell_type,target=x,trait=trait,status=status,
     n_parent_tf=0,n_candidate_snp=0,n_cojo_signal=0,n_cis_signal=0,n_trans_signal=0,
+    n_ld_aligned_signal=0,n_mr_iv=0,n_mr_cis_iv=0,n_mr_trans_iv=0,
     effective_F=NA,trans_information_fraction=NA,n_tf_anchor_tested=0,n_tf_anchor_fdr=0,
-    n_sibling_candidate=0,n_sibling_active=0,n_sibling_qtl_missing=0,
+    n_sibling_candidate=0,n_sibling_active=0,n_sibling_incomplete=0,n_sibling_qtl_missing=0,
+    n_sibling_iv_missing=0,sibling_screen_performed=FALSE,sibling_screen_complete=NA,
     cis_trans_heterogeneity_p=NA,max_tf_locus_weight=NA,leave_one_tf_max_delta=NA,
-    beta_network=NA,se_network=NA,p_network=NA,conditional_F_X=NA,mvmr_rank=NA,mvmr_condition=NA,
+    network_status=NA_character_,beta_network=NA,se_network=NA,p_network=NA,
+    conditional_F_X=NA,conditional_F_converged=NA,mvmr_rank=NA,mvmr_condition=NA,
+    mvmr_n_iv=NA_integer_,mvmr_union_requested=NA_integer_,mvmr_union_ld_available=NA_integer_,
+    mvmr_union_complete_case=NA_integer_,mvmr_max_r2=NA,mvmr_ld_gate_pass=NA,
     primary_model=NA_character_,primary_beta=NA,primary_se=NA,primary_p=NA,stringsAsFactors=FALSE)
 
   for(target in targets){
@@ -593,11 +732,19 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
       cojo_collinear,cojo_threads,file.path(outdir,"cojo",target),verbose),error=function(e)e)
     if(inherits(co,"error")){warning(sprintf("[%s] %s",target,conditionMessage(co)));srow$status<-"COJO_FAILED";summ[[target]]<-srow;next}
     if(!nrow(co$selected)){srow$status<-"NO_COJO_SIGNAL";summ[[target]]<-srow;next}
+    co_meta<-cmap[match(co$selected$snp,cmap$snp),,drop=FALSE]
+    srow$n_cojo_signal<-nrow(co$selected)
+    srow$n_cis_signal<-sum(co_meta$source=="cis",na.rm=TRUE)
+    srow$n_trans_signal<-sum(co_meta$source=="trans",na.rm=TRUE)
     sel<-qtl[match(co$selected$snp,qtl$snp),,drop=FALSE];sel<-.cater_align_to_ld(sel,co$selected)
+    srow$n_ld_aligned_signal<-nrow(sel)
     if(!nrow(sel)){srow$status<-"NO_LD_ALLELE_MATCH";summ[[target]]<-srow;next}
     meta<-cmap[match(sel$snp,cmap$snp),,drop=FALSE]
     sel$source<-meta$source;sel$parent_tf<-meta$parent_tf;sel$locus_id<-meta$locus_id
     h<-.cater_harmonize(sel,outcome,drop_palindromic)
+    srow$n_mr_iv<-nrow(h)
+    srow$n_mr_cis_iv<-if(nrow(h)) sum(h$source=="cis") else 0L
+    srow$n_mr_trans_iv<-if(nrow(h)) sum(h$source=="trans") else 0L
     if(!nrow(h)){srow$status<-"NO_HARMONIZED_IV";summ[[target]]<-srow;next}
     co$ld<-.cater_subset_ld(co$ld,h$snp)
     utils::write.table(h,file.path(outdir,"instruments",paste0(target,".tsv")),sep="\t",quote=FALSE,row.names=FALSE)
@@ -609,10 +756,8 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
       f<-.cater_givw(d,R); fits[[m]]<-f
       long[[paste(target,m,sep=":")]]<-data.frame(cell_type=cell_type,target=target,trait=trait,model=m,f,stringsAsFactors=FALSE)
     }
-    srow$n_cojo_signal<-nrow(h);srow$n_cis_signal<-sum(h$source=="cis");srow$n_trans_signal<-sum(h$source=="trans")
     srow$effective_F<-fits$combined$effective_F
-    Ic<-fits$cis$information;Ia<-fits$combined$information
-    srow$trans_information_fraction<-if(is.finite(Ia)&&Ia>0&&is.finite(Ic)) max(0,min(1,(Ia-Ic)/Ia)) else NA_real_
+    srow$trans_information_fraction<-.cater_trans_information_fraction(fits$cis,fits$combined)
     ht<-.cater_cis_trans_het(h,co$ld);srow$cis_trans_heterogeneity_p<-ht["p"]
     ldgn<-.cater_locus_diagnostics(h,co$ld);srow$max_tf_locus_weight<-ldgn$max_weight;srow$leave_one_tf_max_delta<-ldgn$leave_one_max_delta
     if(nrow(ldgn$table)) utils::write.table(ldgn$table,file.path(outdir,"diagnostics",paste0(target,"_loci.tsv")),sep="\t",quote=FALSE,row.names=FALSE)
@@ -626,47 +771,51 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
       srow$n_tf_anchor_fdr<-sum(anchor$status=="OK"&is.finite(anchor$q_tf)&anchor$q_tf<0.05)
     }
 
-    sib<-list(table=data.frame(),active=character(),n_candidate=0L,n_missing=0L)
-    if(enable_sibling_screen&&any(h$source=="trans")){
+    has_trans<-any(h$source=="trans")
+    sib<-list(table=data.frame(),active=character(),n_candidate=0L,n_incomplete=0L,
+              n_qtl_missing=0L,n_iv_missing=0L,complete=TRUE)
+    if(enable_sibling_screen&&has_trans){
+      srow$sibling_screen_performed<-TRUE
       sib<-.cater_sibling_screen(target,h,grn,co$selected,co$ld,eqtl_dir,qtl_n,sibling_fdr)
+      srow$sibling_screen_complete<-sib$complete
       if(nrow(sib$table)) utils::write.table(sib$table,file.path(outdir,"pleiotropy",paste0(target,"_siblings.tsv")),sep="\t",quote=FALSE,row.names=FALSE)
+    } else if(has_trans) {
+      srow$sibling_screen_complete<-FALSE
     }
-    srow$n_sibling_candidate<-sib$n_candidate;srow$n_sibling_active<-length(sib$active);srow$n_sibling_qtl_missing<-sib$n_missing
+    srow$n_sibling_candidate<-sib$n_candidate;srow$n_sibling_active<-length(sib$active)
+    srow$n_sibling_incomplete<-sib$n_incomplete;srow$n_sibling_qtl_missing<-sib$n_qtl_missing
+    srow$n_sibling_iv_missing<-sib$n_iv_missing
 
     net<-NULL
     if(enable_mvmr&&length(sib$active)){
       net<-.cater_build_mvmr(target,qtl,co$selected,sib$active,ann,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
         cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,outdir,outcome,drop_palindromic,
         exposure_corr,min_cond_F,mvmr_max_r2,mvmr_max_condition,verbose)
+      srow$network_status<-net$status
       if(identical(net$status,"OK")){
         srow$beta_network<-net$beta[target];srow$se_network<-net$se[target];srow$p_network<-net$p[target]
-        srow$conditional_F_X<-net$conditional_F[target];srow$mvmr_rank<-net$rank;srow$mvmr_condition<-net$condition
+        srow$conditional_F_X<-net$conditional_F[target]
+        srow$conditional_F_converged<-isTRUE(net$conditional_F_converged[target])
+        srow$mvmr_rank<-net$rank;srow$mvmr_condition<-net$condition;srow$mvmr_n_iv<-net$n_iv
+        srow$mvmr_union_requested<-net$n_union_requested
+        srow$mvmr_union_ld_available<-net$n_union_ld_available
+        srow$mvmr_union_complete_case<-net$n_union_complete_case
+        srow$mvmr_max_r2<-net$max_r2;srow$mvmr_ld_gate_pass<-net$ld_gate_pass
         long[[paste(target,"network",sep=":")]]<-data.frame(cell_type=cell_type,target=target,trait=trait,model="network",
           n_iv=net$n_iv,beta=net$beta[target],se=net$se[target],p=net$p[target],Q=net$Q,Q_p=net$Q_p,
-          information=NA,effective_F=net$conditional_F[target],mean_F=NA,min_F=NA,status=if(net$primary_eligible)"OK" else "SENSITIVITY_ONLY",
+          information=NA,effective_F=net$conditional_F[target],mean_F=NA,min_F=NA,status=if(net$primary_eligible&&isTRUE(sib$complete))"OK" else "SENSITIVITY_ONLY",
           stringsAsFactors=FALSE)
       }
     }
 
-    if(length(sib$active)){
-      if(!is.null(net)&&identical(net$status,"OK")&&isTRUE(net$primary_eligible)){
-        srow$primary_model<-"network";srow$primary_beta<-srow$beta_network;srow$primary_se<-srow$se_network;srow$primary_p<-srow$p_network
-        srow$status<-"OK_NETWORK_ADJUSTED"
-      } else if(fits$cis$status=="OK"){
-        srow$primary_model<-"cis";srow$primary_beta<-fits$cis$beta;srow$primary_se<-fits$cis$se;srow$primary_p<-fits$cis$p
-        srow$status<-"TRANS_PLEIOTROPY_UNRESOLVED"
-      } else {
-        srow$primary_model<-"combined_sensitivity";srow$primary_beta<-fits$combined$beta;srow$primary_se<-fits$combined$se;srow$primary_p<-fits$combined$p
-        srow$status<-"TRANS_PLEIOTROPY_UNRESOLVED_NO_CIS"
-      }
-    } else if(fits$combined$status=="OK"){
-      srow$primary_model<-if(any(h$source=="trans"))"combined" else "cis"
-      srow$primary_beta<-fits$combined$beta;srow$primary_se<-fits$combined$se;srow$primary_p<-fits$combined$p
-      srow$status<-if(any(h$source=="trans"))"OK_CATER" else "OK_CIS_ONLY"
-      if(sib$n_missing>0L) srow$status<-"SIBLING_QTL_INCOMPLETE"
-    } else {
-      srow$status<-"MR_FAILED"
-    }
+    if(!is.null(net)&&identical(net$status,"OK"))
+      net$primary_eligible<-isTRUE(net$primary_eligible)&&isTRUE(sib$complete)
+    dec<-.cater_primary_decision(fits,net=net,target=target,has_trans=has_trans,
+      sibling_screen_performed=srow$sibling_screen_performed,
+      sibling_screen_complete=if(has_trans) isTRUE(srow$sibling_screen_complete) else TRUE,
+      n_active_siblings=length(sib$active))
+    srow$primary_model<-dec$model;srow$primary_beta<-dec$beta;srow$primary_se<-dec$se;srow$primary_p<-dec$p
+    srow$status<-dec$status
     summ[[target]]<-srow
   }
 
