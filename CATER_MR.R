@@ -480,7 +480,7 @@
   if(any(abs(diag(C)-1)>1e-6)) .cater_stop("exposure_corr must have unit diagonal")
   if(any(abs(C)>1+1e-8)) .cater_stop("exposure_corr entries must lie in [-1,1]")
   ev<-eigen((C+t(C))/2,symmetric=TRUE,only.values=TRUE)$values
-  if(min(ev)<-1e-8*max(1,max(abs(ev)))) .cater_stop("exposure_corr must be positive semidefinite")
+  if(min(ev) < -1e-8 * max(1,max(abs(ev)))) .cater_stop("exposure_corr must be positive semidefinite")
   C
 }
 
