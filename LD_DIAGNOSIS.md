@@ -28,7 +28,7 @@ This is a QC gate only. It does not use SuSiE PIP or credible sets for instrumen
 
 ## Dependencies and options
 
-With the default `enable_ld_diagnosis=TRUE`, PLINK 1.9 and the R package `susieR` are required. `plink_bin` can be an executable name on `PATH` or an explicit path. The default detection thresholds are `ld_diag_loglr=2` and `ld_diag_abs_z=2`.
+With the default `enable_ld_diagnosis=TRUE`, PLINK 1.9 and the R package `susieR` are required. `plink_bin` can be an executable name on `PATH` or an explicit path. The default detection thresholds are `ld_diag_loglr=2` and `ld_diag_abs_z=2`. `enable_ld_diagnosis` must be a scalar logical (`TRUE` or `FALSE`); numeric or string truthy values are rejected rather than silently disabling the QC gate.
 
 Set `enable_ld_diagnosis=FALSE` only to reproduce the legacy COJO path without this QC gate.
 
