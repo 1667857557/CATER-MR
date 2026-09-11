@@ -20,12 +20,14 @@
   ca1 <- .cater_complement_allele(qa1); ca2 <- .cater_complement_allele(qa2)
   comp_same <- !same & !swap & ca1==ra1 & ca2==ra2
   comp_swap <- !same & !swap & ca1==ra2 & ca2==ra1
-  sign <- ifelse(same|comp_same, 1, ifelse(swap|comp_swap, -1, NA_real_))
+  # Keep the same direct A1/A2 contract as the downstream COJO/MR alignment.
+  # Strand complements are recorded for audit, but are not inferred as matches.
+  sign <- ifelse(same, 1, ifelse(swap, -1, NA_real_))
   alignment <- ifelse(same, "same", ifelse(swap, "swap",
     ifelse(comp_same, "strand_same", ifelse(comp_swap, "strand_swap", "mismatch"))))
   z0 <- d$beta/d$se
   data.frame(snp=d$snp,qtl_a1=qa1,qtl_a2=qa2,ld_a1=ra1,ld_a2=ra2,
-             z_raw=z0,z=z0*sign,alignment=alignment,allele_match=is.finite(sign),
+             z_raw=z0,z=z0*sign,alignment=alignment,allele_match=same|swap,
              stringsAsFactors=FALSE)
 }
 
@@ -37,8 +39,23 @@
           is.finite(conditional_dist$z) & abs(conditional_dist$z) > abs_z_cutoff)
 }
 
+.cater_validate_diag_ld <- function(R, label="diagnostic LD", tol=1e-6) {
+  R <- as.matrix(R)
+  if (!is.numeric(R) || nrow(R)!=ncol(R)) .cater_stop("%s must be a square numeric matrix",label)
+  if (any(!is.finite(R))) .cater_stop("%s contains non-finite values",label)
+  if (max(abs(R-t(R)))>tol) .cater_stop("%s is not symmetric",label)
+  if (any(abs(diag(R)-1)>tol)) .cater_stop("%s diagonal is not one",label)
+  if (any(abs(R)>1+tol)) .cater_stop("%s contains correlations outside [-1,1]",label)
+  # Do not impose an extra PSD eigenvalue gate here. susieR performs its own
+  # RSS eigenvalue handling; an additional strict gate can reject rounded PLINK
+  # correlation matrices before the reference diagnostic gets a chance to run.
+  R <- (R+t(R))/2
+  diag(R) <- 1
+  R
+}
+
 .cater_read_plink_bim <- function(path) {
-  if (!file.exists(path)) return(data.frame())
+  if (!file.exists(path) || is.na(file.info(path)$size) || file.info(path)$size==0) return(data.frame())
   x <- utils::read.table(path, header=FALSE, stringsAsFactors=FALSE, check.names=FALSE)
   if (!nrow(x)) return(data.frame())
   if (ncol(x) < 6L) .cater_stop("Malformed PLINK BIM: %s", path)
@@ -95,14 +112,14 @@
     R <- R[keep,keep,drop=FALSE]
   }
   ref <- ref_all[match(rownames(R),ref_all$snp),,drop=FALSE]
-  if (nrow(R)) R <- .cater_validate_ld(R,"pre-COJO PLINK signed LD")
+  if (nrow(R)) R <- .cater_validate_diag_ld(R,"pre-COJO PLINK signed LD")
   list(R=R,ref=ref,ref_all=ref_all,missing=missing,nonfinite=unique(nonfinite))
 }
 
 .cater_susie_ld_diagnosis <- function(z, R, n=NULL, loglr_cutoff=2, abs_z_cutoff=2) {
   if (!requireNamespace("susieR",quietly=TRUE))
     .cater_stop("Package 'susieR' is required when enable_ld_diagnosis=TRUE")
-  z <- as.numeric(z); R <- .cater_validate_ld(R,"SuSiE-RSS diagnostic LD")
+  z <- as.numeric(z); R <- .cater_validate_diag_ld(R,"SuSiE-RSS diagnostic LD")
   if (length(z)!=nrow(R) || any(!is.finite(z))) .cater_stop("SuSiE-RSS LD diagnosis requires one finite z score per LD variant")
   args <- list(z=z,R=R)
   if (!is.null(n) && length(n)==1L && is.finite(n) && n>0) args$n <- as.numeric(n)
