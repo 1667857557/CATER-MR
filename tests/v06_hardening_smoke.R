@@ -128,15 +128,20 @@ stopifnot(identical(formals(cater_mr)$enable_ld_diagnosis,TRUE))
 Rd <- matrix(c(1,.9,.9,.9,1,.6199,.9,.6199,1),3,3,byrow=TRUE)
 stopifnot(identical(dim(.cater_validate_diag_ld(Rd)),c(3L,3L)))
 
-# 18. Overlapping TF windows are one physical LD-diagnosis locus, not A/A;B/B pseudo-loci.
-qg <- data.frame(chr=rep("1",5),stringsAsFactors=FALSE)
-cmg <- data.frame(snp=paste0("g",1:5),
-                  source=c("cis","trans","trans","trans","trans"),
-                  parent_tf=c("","A","A;B","B","C"),
-                  locus_id=c("cis","TF:A","TF:A;B","TF:B","TF:C"),
-                  stringsAsFactors=FALSE)
-gg <- .cater_ld_diagnosis_groups(qg,cmg)
-stopifnot(gg[1]=="1|cis",gg[2]==gg[3],gg[3]==gg[4],gg[5]!=gg[2])
-stopifnot(grepl("TF:A\\+B$",gg[2]))
+# 18. Overlapping TF windows are merged by genomic interval before candidate assignment.
+ann_locus <- data.frame(symbol=c("X","A","B","C"),chr=rep("1",4),
+                        tss=c(1000,10000,11500,20000),stringsAsFactors=FALSE)
+reg_locus <- .cater_make_regions("X",c("A","B","C"),ann_locus,cis_window=50,tf_window=1000)
+tr_locus <- reg_locus[reg_locus$type=="trans",,drop=FALSE]
+stopifnot(tr_locus$locus_id[tr_locus$gene=="A"]=="TF:A+B",
+          tr_locus$locus_id[tr_locus$gene=="B"]=="TF:A+B",
+          tr_locus$locus_id[tr_locus$gene=="C"]=="TF:C")
+q_locus <- data.frame(snp=paste0("g",1:4),chr=rep("1",4),
+                      pos=c(9500,10750,12000,20000),stringsAsFactors=FALSE)
+cm_locus <- .cater_candidate_map(q_locus,reg_locus)
+stopifnot(identical(cm_locus$parent_tf,c("A","A;B","B","C")),
+          identical(cm_locus$locus_id,c("TF:A+B","TF:A+B","TF:A+B","TF:C")))
+gg <- .cater_ld_diagnosis_groups(q_locus,cm_locus)
+stopifnot(gg[1]==gg[2],gg[2]==gg[3],gg[4]!=gg[1])
 
 cat("CATER-MR direct-core evidence-safety tests passed\n")

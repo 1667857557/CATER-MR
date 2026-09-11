@@ -2,9 +2,11 @@
 
 CATER-MR performs an LD/summary-statistic consistency gate before every Manc-COJO selection step by default.
 
+Trans candidates are defined by local parent-TF windows. TF windows on the same chromosome that overlap are merged into one physical locus component before candidate SNP assignment (for example, overlapping A and B windows share `locus_id=TF:A+B`). The original windows are retained for `parent_tf`, so a SNP can still be attributed to A, B, or A;B according to its actual position while LD/SuSiE treats the full overlapping component as one locus.
+
 ## Method
 
-For each candidate cis/trans locus, CATER-MR:
+For each physical candidate cis/TF locus, CATER-MR:
 
 1. forms local diagnostic loci. The target cis locus is kept as its own locus. Trans candidates are defined by parent-TF windows; when two or more TF windows overlap, SNPs annotated to the shared TF set connect those TFs and the full connected component is merged into one physical LD-diagnosis locus. Thus `TF:A`, `TF:A;B`, and `TF:B` are analysed together rather than as three artificial loci;
 2. extracts candidate variants for that local locus from the configured PLINK LD reference;

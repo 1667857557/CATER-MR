@@ -136,13 +136,40 @@
   if (!nrow(ta)) return(NULL)
   reg <- data.frame(type="cis",gene=target,chr=ta$chr[1],
                     start=max(1,ta$tss[1]-cis_window),end=ta$tss[1]+cis_window,
-                    stringsAsFactors=FALSE)
+                    locus_id="cis",stringsAsFactors=FALSE)
   if (length(parents)) {
     pa <- annotation[match(parents,annotation$symbol),,drop=FALSE]
     pa$gene <- parents
     pa <- pa[!is.na(pa$chr)&is.finite(pa$tss),,drop=FALSE]
-    if (nrow(pa)) reg <- rbind(reg,data.frame(type="trans",gene=pa$gene,chr=pa$chr,
-      start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,stringsAsFactors=FALSE))
+    if (nrow(pa)) {
+      tr <- data.frame(type="trans",gene=pa$gene,chr=pa$chr,
+        start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,
+        locus_id=NA_character_,stringsAsFactors=FALSE)
+      # Merge overlapping TF windows into physical locus components before SNP
+      # assignment. Original TF windows remain separate rows so parent_tf still
+      # records which TF window(s) each SNP actually occupies.
+      component <- integer(nrow(tr)); next_component <- 0L
+      for (ch in unique(tr$chr)) {
+        oi <- which(tr$chr==ch)
+        oi <- oi[order(tr$start[oi],tr$end[oi],tr$gene[oi])]
+        current <- 0L; current_end <- -Inf
+        for (idx in oi) {
+          if (current==0L || tr$start[idx] > current_end) {
+            next_component <- next_component + 1L
+            current <- next_component
+            current_end <- tr$end[idx]
+          } else {
+            current_end <- max(current_end,tr$end[idx])
+          }
+          component[idx] <- current
+        }
+      }
+      for (cc in unique(component)) {
+        jj <- which(component==cc)
+        tr$locus_id[jj] <- paste0("TF:",paste(sort(unique(tr$gene[jj])),collapse="+"))
+      }
+      reg <- rbind(reg,tr)
+    }
   }
   rownames(reg) <- NULL
   reg
@@ -153,18 +180,27 @@
   cis <- regions[regions$type=="cis",,drop=FALSE]
   is_cis <- qtl$chr==cis$chr[1] & qtl$pos>=cis$start[1] & qtl$pos<=cis$end[1]
   tr <- regions[regions$type=="trans",,drop=FALSE]
-  hits <- vector("list",nrow(qtl))
+  hits <- vector("list",nrow(qtl)); loci <- vector("list",nrow(qtl))
   if (nrow(tr)) for (k in seq_len(nrow(tr))) {
     z <- qtl$chr==tr$chr[k] & qtl$pos>=tr$start[k] & qtl$pos<=tr$end[k] & !is_cis
-    if (any(z)) hits[z] <- lapply(hits[z], function(x) c(x,tr$gene[k]))
+    if (any(z)) {
+      hits[z] <- lapply(hits[z], function(x) c(x,tr$gene[k]))
+      loci[z] <- lapply(loci[z], function(x) c(x,tr$locus_id[k]))
+    }
   }
   is_trans <- lengths(hits)>0L
   keep <- is_cis|is_trans
   if (!any(keep)) return(data.frame())
   parents <- vapply(hits[keep],function(x) if(length(x)) paste(sort(unique(x)),collapse=";") else "",character(1))
+  physical_locus <- vapply(loci[keep],function(x) {
+    u <- sort(unique(x[nzchar(x)]))
+    if (!length(u)) return("")
+    if (length(u)!=1L) .cater_stop("A trans SNP was assigned to multiple physical TF loci")
+    u
+  },character(1))
   data.frame(snp=qtl$snp[keep],source=ifelse(is_cis[keep],"cis","trans"),
              parent_tf=parents,
-             locus_id=ifelse(is_cis[keep],"cis",paste0("TF:",parents)),
+             locus_id=ifelse(is_cis[keep],"cis",physical_locus),
              stringsAsFactors=FALSE)
 }
 
