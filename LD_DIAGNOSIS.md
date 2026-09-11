@@ -1,6 +1,6 @@
 # Pre-COJO LD consistency diagnosis
 
-CATER-MR performs an LD/summary-statistic consistency gate before every Manc-COJO selection step by default.
+CATER-MR performs an LD/summary-statistic consistency gate before every Manc-COJO selection step by default. Before locus construction, the default genetic QC also removes palindromic A/T and C/G variants (`drop_palindromic=TRUE`) and excludes the extended MHC using GRCh38/hg38 coordinates `chr6:25,000,000-36,000,000` (`exclude_mhc=TRUE`). Targets whose TSS lies inside this MHC interval are skipped, and parent TFs whose TSS lies inside it do not contribute trans loci.
 
 Candidate loci are defined from the target cis window and all parent-TF windows together. Overlapping intervals on the same chromosome are merged into connected physical components before candidate SNP assignment. Any component containing the target cis window is treated in full as the cis locus (`locus_id=cis`), including TF-window extensions connected to it; those SNPs are not reused as trans instruments. Components containing only TF windows remain local trans loci such as `TF:A+B`.
 
@@ -18,7 +18,7 @@ For each physical local cis/TF locus, CATER-MR:
 
 `locus_id` is the physical cis/TF locus used for LD diagnosis and is also propagated with the retained instruments. TF-only components retain `parent_tf` for biological attribution. If a TF component overlaps the target cis component, the entire connected component is classified as cis and its SNPs are deliberately not assigned a trans parent, avoiding cis/trans double interpretation within one local LD neighbourhood.
 
-Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the direct A1/A2 contract are also removed and explicitly reported. All variants whose original PLINK LD row contains any non-finite entry are removed simultaneously, so this QC is not variant-order dependent. Palindromic A/T and C/G variants are not assigned a signed z score from allele labels alone; without frequency-based strand disambiguation they are excluded from SuSiE-RSS diagnosis, retained for downstream COJO, and reported as `NOT_DIAGNOSABLE_PALINDROMIC`. A one-variant diagnosable locus is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
+Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the direct A1/A2 contract are also removed and explicitly reported. All variants whose original PLINK LD row contains any non-finite entry are removed simultaneously, so this QC is not variant-order dependent. With the default `drop_palindromic=TRUE`, palindromic A/T and C/G variants are removed before candidate-locus LD diagnosis and COJO. If that option is explicitly disabled, the LD-diagnosis helper still refuses to infer their signed z score from allele labels alone and reports them as `NOT_DIAGNOSABLE_PALINDROMIC`. A one-variant diagnosable locus is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
 
 The PLINK matrix is checked for dimensions, finite entries, symmetry, unit diagonal, and correlation range. CATER-MR deliberately does not impose an additional strict positive-semidefinite eigenvalue gate before SuSiE-RSS, because `susieR` performs the RSS eigenvalue handling itself and text-formatted PLINK matrices can contain small rounding artifacts.
 
@@ -30,7 +30,7 @@ This is a QC gate only. It does not use SuSiE PIP or credible sets for instrumen
 
 With the default `enable_ld_diagnosis=TRUE`, PLINK 1.9 and the R package `susieR` are required. `plink_bin` can be an executable name on `PATH` or an explicit path. The default detection thresholds are `ld_diag_loglr=2` and `ld_diag_abs_z=2`. `enable_ld_diagnosis` must be a scalar logical (`TRUE` or `FALSE`); numeric or string truthy values are rejected rather than silently disabling the QC gate.
 
-Set `enable_ld_diagnosis=FALSE` only to reproduce the legacy COJO path without this QC gate.
+Set `enable_ld_diagnosis=FALSE` only to reproduce the legacy COJO path without this QC gate. `exclude_mhc=TRUE` is independent of the SuSiE gate and remains enabled by default; its coordinates are fixed to the conservative GRCh38/hg38 extended-MHC interval chr6:25-36 Mb.
 
 ## Output
 

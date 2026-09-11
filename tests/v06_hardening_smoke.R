@@ -194,4 +194,21 @@ for (bad_flag in list(1,"TRUE")) {
   stopifnot(inherits(err,"error"),grepl("enable_ld_diagnosis must be TRUE or FALSE",conditionMessage(err),fixed=TRUE))
 }
 
+# 23. Default analysis QC uses GRCh38/hg38 extended MHC chr6:25-36 Mb and drops palindromes.
+stopifnot(identical(.CATER_MHC_HG38,c(chr="6",start="25000000",end="36000000")) ||
+          (as.character(.CATER_MHC_HG38[["chr"]])=="6" &&
+           as.numeric(.CATER_MHC_HG38[["start"]])==25000000 &&
+           as.numeric(.CATER_MHC_HG38[["end"]])==36000000))
+stopifnot(identical(.cater_is_mhc_hg38(c("6","chr6","6","6"),
+                                       c(25000000,36000000,24999999,36000001)),
+                    c(TRUE,TRUE,FALSE,FALSE)))
+q_qc <- data.frame(snp=c("mhc","pal","ok"),chr=c("6","1","1"),pos=c(30000000,100,200),
+                   a1=c("A","A","A"),a2=c("C","T","G"),beta=1,se=1,p=.1,eaf=.2,n=100,
+                   stringsAsFactors=FALSE)
+q_keep <- .cater_filter_analysis_variants(q_qc,drop_palindromic=TRUE,exclude_mhc=TRUE)
+stopifnot(identical(q_keep$snp,"ok"),attr(q_keep,"analysis_qc")$n_mhc_excluded==1L,
+          attr(q_keep,"analysis_qc")$n_palindromic_excluded==1L)
+q_keep_pal <- .cater_filter_analysis_variants(q_qc,drop_palindromic=FALSE,exclude_mhc=TRUE)
+stopifnot(identical(q_keep_pal$snp,c("pal","ok")))
+
 cat("CATER-MR direct-core evidence-safety tests passed\n")

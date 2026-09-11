@@ -2,7 +2,7 @@
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
 # Direct implementation: GRN-gated cis/trans selection + standard LD-aware MR.
 
-.CATER_VERSION <- "0.7.2"
+.CATER_VERSION <- "0.7.3"
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -79,6 +79,28 @@
     n_invalid_p = sum(!valid_p),
     n_invalid_allele = sum(!valid_allele)
   )
+  out
+}
+
+# Conservative GRCh38/hg38 extended MHC exclusion used for genetic analyses.
+# The interval is inclusive and intentionally broader than the core GRC MHC
+# alternate-locus placement to avoid the long-range LD structure around MHC.
+.CATER_MHC_HG38 <- c(chr="6", start=25000000, end=36000000)
+
+.cater_is_mhc_hg38 <- function(chr,pos) {
+  ch <- sub("^chr","",as.character(chr),ignore.case=TRUE)
+  pp <- suppressWarnings(as.numeric(pos))
+  !is.na(ch) & ch==.CATER_MHC_HG38[["chr"]] & is.finite(pp) &
+    pp>=as.numeric(.CATER_MHC_HG38[["start"]]) & pp<=as.numeric(.CATER_MHC_HG38[["end"]])
+}
+
+.cater_filter_analysis_variants <- function(qtl, drop_palindromic=TRUE, exclude_mhc=TRUE) {
+  if (!nrow(qtl)) return(qtl)
+  mhc <- if (isTRUE(exclude_mhc)) .cater_is_mhc_hg38(qtl$chr,qtl$pos) else rep(FALSE,nrow(qtl))
+  pal <- if (isTRUE(drop_palindromic)) .cater_is_palindromic(qtl$a1,qtl$a2) else rep(FALSE,nrow(qtl))
+  out <- qtl[!(mhc|pal),,drop=FALSE]
+  rownames(out) <- NULL
+  attr(out,"analysis_qc") <- list(n_mhc_excluded=sum(mhc),n_palindromic_excluded=sum(pal & !mhc))
   out
 }
 
@@ -657,8 +679,11 @@
 .cater_run_sibling_cis <- function(gene,annotation,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
                                    cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose,
                                    plink_bin="plink",enable_ld_diagnosis=TRUE,
-                                   ld_diag_loglr=2,ld_diag_abs_z=2) {
+                                   ld_diag_loglr=2,ld_diag_abs_z=2,drop_palindromic=TRUE,exclude_mhc=TRUE) {
+  ga<-annotation[annotation$symbol==gene,,drop=FALSE]
+  if(isTRUE(exclude_mhc)&&nrow(ga)&&.cater_is_mhc_hg38(ga$chr[1],ga$tss[1])) return(NULL)
   q<-.cater_read_gene(gene,eqtl_dir,qtl_n);if(is.null(q)) return(NULL)
+  q<-.cater_filter_analysis_variants(q,drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc)
   reg<-.cater_make_regions(gene,character(),annotation,cis_window,cis_window)
   if(is.null(reg)) return(NULL)
   cmap<-.cater_candidate_map(q,reg);if(!nrow(cmap)) return(list(qtl=q,selected=data.frame()))
@@ -671,14 +696,15 @@
                               ld_bfile,manc_cojo_bin,cis_window,cojo_p,cojo_wind_kb,cojo_collinear,
                               cojo_threads,outdir,outcome,drop_palindromic,exposure_corr,min_cond_F,
                               mvmr_max_r2,mvmr_max_condition,verbose,plink_bin="plink",
-                              enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2) {
+                              enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2,exclude_mhc=TRUE) {
   sibco<-list();union<-target_sel$snp
   for(z in active_siblings){
     pr<-file.path(outdir,"cojo_mvmr",target,z)
     x<-tryCatch(.cater_run_sibling_cis(z,annotation,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
       cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,pr,verbose,
       plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,
-      ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z),error=function(e)NULL)
+      ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z,
+      drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc),error=function(e)NULL)
     sibco[[z]]<-x
     if(!is.null(x)&&nrow(x$selected)) union<-unique(c(union,x$selected$snp))
   }
@@ -922,10 +948,13 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=NULL,mvmr_max_condition=1e4,
                      outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE,
                      primary_policy=c("cis_anchor","screened_cater"),plink_bin="plink",
-                     enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2) {
+                     enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2,
+                     exclude_mhc=TRUE) {
   primary_policy<-match.arg(primary_policy)
   if(length(plink_bin)!=1L||is.na(plink_bin)||!nzchar(as.character(plink_bin))) .cater_stop("plink_bin must be a non-empty scalar")
   if(!is.logical(enable_ld_diagnosis)||length(enable_ld_diagnosis)!=1L||is.na(enable_ld_diagnosis)) .cater_stop("enable_ld_diagnosis must be TRUE or FALSE")
+  if(!is.logical(exclude_mhc)||length(exclude_mhc)!=1L||is.na(exclude_mhc)) .cater_stop("exclude_mhc must be TRUE or FALSE")
+  if(!is.logical(drop_palindromic)||length(drop_palindromic)!=1L||is.na(drop_palindromic)) .cater_stop("drop_palindromic must be TRUE or FALSE")
   if(length(ld_diag_loglr)!=1L||!is.finite(ld_diag_loglr)||ld_diag_loglr<0) .cater_stop("ld_diag_loglr must be a finite non-negative scalar")
   if(length(ld_diag_abs_z)!=1L||!is.finite(ld_diag_abs_z)||ld_diag_abs_z<0) .cater_stop("ld_diag_abs_z must be a finite non-negative scalar")
   if(!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s",eqtl_dir)
@@ -948,7 +977,8 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
 
   long<-list();summ<-list()
   empty_summary<-function(x,status) data.frame(cell_type=cell_type,target=x,trait=trait,status=status,
-    n_parent_tf=0,n_candidate_snp=0,n_ld_diag_removed=0,n_ld_diag_susie=0,
+    n_parent_tf=0,n_parent_tf_mhc_excluded=0,n_candidate_snp=0,n_mhc_excluded=0,n_palindromic_excluded=0,
+    n_ld_diag_removed=0,n_ld_diag_susie=0,
     n_ld_reference_missing=0,n_ld_allele_mismatch=0,n_ld_nonfinite=0,ld_diag_lambda_max=NA_real_,
     n_cojo_signal=0,n_cis_signal=0,n_trans_signal=0,n_ld_aligned_signal=0,
     n_mr_iv=0,n_mr_cis_iv=0,n_mr_trans_iv=0,
@@ -965,11 +995,24 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
   for(target in targets){
     .cater_msg(verbose,"[%s] starting",target)
     srow<-empty_summary(target,"START")
-    parents<-unique(grn$TF[grn$Target==target]);srow$n_parent_tf<-length(parents)
+    parents<-unique(grn$TF[grn$Target==target])
+    ta<-ann[ann$symbol==target,,drop=FALSE]
+    if(!nrow(ta)){srow$status<-"NO_TARGET_ANNOTATION";summ[[target]]<-srow;next}
+    if(isTRUE(exclude_mhc)&&.cater_is_mhc_hg38(ta$chr[1],ta$tss[1])){
+      srow$status<-"TARGET_IN_MHC_EXCLUDED";summ[[target]]<-srow;next
+    }
+    if(length(parents)&&isTRUE(exclude_mhc)){
+      pa<-ann[match(parents,ann$symbol),,drop=FALSE]
+      parent_mhc<-!is.na(pa$symbol)&.cater_is_mhc_hg38(pa$chr,pa$tss)
+      srow$n_parent_tf_mhc_excluded<-sum(parent_mhc)
+      parents<-parents[!parent_mhc]
+    }
+    srow$n_parent_tf<-length(parents)
     qtl<-.cater_read_gene(target,eqtl_dir,qtl_n)
     if(is.null(qtl)){srow$status<-"NO_EQTL_FILE";summ[[target]]<-srow;next}
+    qtl<-.cater_filter_analysis_variants(qtl,drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc)
+    aqc<-attr(qtl,"analysis_qc"); if(!is.null(aqc)){srow$n_mhc_excluded<-aqc$n_mhc_excluded;srow$n_palindromic_excluded<-aqc$n_palindromic_excluded}
     regions<-.cater_make_regions(target,parents,ann,cis_window,tf_window)
-    if(is.null(regions)){srow$status<-"NO_TARGET_ANNOTATION";summ[[target]]<-srow;next}
     cmap<-.cater_candidate_map(qtl,regions);srow$n_candidate_snp<-nrow(cmap)
     if(!nrow(cmap)){srow$status<-"NO_CANDIDATE_SNP";summ[[target]]<-srow;next}
     co<-tryCatch(.cater_run_cojo(qtl,cmap,ld_bfile,manc_cojo_bin,cojo_p,cojo_wind_kb,
@@ -1055,7 +1098,7 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
         cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,outdir,outcome,drop_palindromic,
         exposure_corr,min_cond_F,mvmr_max_r2,mvmr_max_condition,verbose,
         plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,
-        ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z)
+        ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z,exclude_mhc=exclude_mhc)
       srow$network_status<-net$status
       if(identical(net$status,"OK")){
         srow$beta_network<-net$beta[target];srow$se_network<-net$se[target];srow$p_network<-net$p[target]
