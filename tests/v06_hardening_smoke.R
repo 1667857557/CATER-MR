@@ -128,4 +128,15 @@ stopifnot(identical(formals(cater_mr)$enable_ld_diagnosis,TRUE))
 Rd <- matrix(c(1,.9,.9,.9,1,.6199,.9,.6199,1),3,3,byrow=TRUE)
 stopifnot(identical(dim(.cater_validate_diag_ld(Rd)),c(3L,3L)))
 
+# 18. Overlapping TF windows are one physical LD-diagnosis locus, not A/A;B/B pseudo-loci.
+qg <- data.frame(chr=rep("1",5),stringsAsFactors=FALSE)
+cmg <- data.frame(snp=paste0("g",1:5),
+                  source=c("cis","trans","trans","trans","trans"),
+                  parent_tf=c("","A","A;B","B","C"),
+                  locus_id=c("cis","TF:A","TF:A;B","TF:B","TF:C"),
+                  stringsAsFactors=FALSE)
+gg <- .cater_ld_diagnosis_groups(qg,cmg)
+stopifnot(gg[1]=="1|cis",gg[2]==gg[3],gg[3]==gg[4],gg[5]!=gg[2])
+stopifnot(grepl("TF:A\\+B$",gg[2]))
+
 cat("CATER-MR direct-core evidence-safety tests passed\n")
