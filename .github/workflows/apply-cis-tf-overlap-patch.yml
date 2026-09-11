@@ -1,0 +1,34 @@
+name: Apply cis-TF overlap locus patch
+
+on:
+  push:
+    branches:
+      - feature/susie-ld-diagnosis-pre-cojo
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/susie-ld-diagnosis-pre-cojo
+      - name: Apply patch
+        run: python .github/scripts/apply_cis_tf_overlap_patch.py
+      - name: Validate patch
+        run: |
+          git diff --check
+          grep -q '.CATER_VERSION <- "0.7.2"' R/CATER_MR_core_v05.R
+          grep -q 'reg_cis_tf' tests/v06_hardening_smoke.R
+          grep -q 'entire connected component is classified as cis' LD_DIAGNOSIS.md
+      - name: Commit direct-core change and remove patch machinery
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add R/CATER_MR_core_v05.R tests/v06_hardening_smoke.R LD_DIAGNOSIS.md
+          git rm .github/scripts/apply_cis_tf_overlap_patch.py .github/workflows/apply-cis-tf-overlap-patch.yml
+          git commit -m "Absorb overlapping TF components into the target cis locus"
+          git push origin HEAD:feature/susie-ld-diagnosis-pre-cojo
