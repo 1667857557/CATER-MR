@@ -6,7 +6,7 @@ Trans candidates are defined by local parent-TF windows. TF windows on the same 
 
 ## Method
 
-For each physical candidate cis/TF locus, CATER-MR:
+For each physical local cis/TF locus, CATER-MR:
 
 1. merges overlapping parent-TF windows by genomic interval into connected physical loci; the target cis window remains its own locus;
 2. assigns candidate SNPs to these physical loci while retaining the exact parent-TF window membership in `parent_tf`;
