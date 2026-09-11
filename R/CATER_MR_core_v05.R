@@ -2,7 +2,7 @@
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
 # Direct implementation: GRN-gated cis/trans selection + standard LD-aware MR.
 
-.CATER_VERSION <- "0.7.0"
+.CATER_VERSION <- "0.7.3"
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -82,6 +82,28 @@
   out
 }
 
+# Conservative GRCh38/hg38 extended MHC exclusion used for genetic analyses.
+# The interval is inclusive and intentionally broader than the core GRC MHC
+# alternate-locus placement to avoid the long-range LD structure around MHC.
+.CATER_MHC_HG38 <- c(chr="6", start=25000000, end=36000000)
+
+.cater_is_mhc_hg38 <- function(chr,pos) {
+  ch <- sub("^chr","",as.character(chr),ignore.case=TRUE)
+  pp <- suppressWarnings(as.numeric(pos))
+  !is.na(ch) & ch==.CATER_MHC_HG38[["chr"]] & is.finite(pp) &
+    pp>=as.numeric(.CATER_MHC_HG38[["start"]]) & pp<=as.numeric(.CATER_MHC_HG38[["end"]])
+}
+
+.cater_filter_analysis_variants <- function(qtl, drop_palindromic=TRUE, exclude_mhc=TRUE) {
+  if (!nrow(qtl)) return(qtl)
+  mhc <- if (isTRUE(exclude_mhc)) .cater_is_mhc_hg38(qtl$chr,qtl$pos) else rep(FALSE,nrow(qtl))
+  pal <- if (isTRUE(drop_palindromic)) .cater_is_palindromic(qtl$a1,qtl$a2) else rep(FALSE,nrow(qtl))
+  out <- qtl[!(mhc|pal),,drop=FALSE]
+  rownames(out) <- NULL
+  attr(out,"analysis_qc") <- list(n_mhc_excluded=sum(mhc),n_palindromic_excluded=sum(pal & !mhc))
+  out
+}
+
 
 .cater_standardize_grn <- function(grn) {
   if (is.list(grn) && !is.data.frame(grn) && !is.null(grn$grn)) grn <- grn$grn
@@ -136,13 +158,44 @@
   if (!nrow(ta)) return(NULL)
   reg <- data.frame(type="cis",gene=target,chr=ta$chr[1],
                     start=max(1,ta$tss[1]-cis_window),end=ta$tss[1]+cis_window,
-                    stringsAsFactors=FALSE)
+                    locus_id=NA_character_,stringsAsFactors=FALSE)
   if (length(parents)) {
     pa <- annotation[match(parents,annotation$symbol),,drop=FALSE]
     pa$gene <- parents
     pa <- pa[!is.na(pa$chr)&is.finite(pa$tss),,drop=FALSE]
     if (nrow(pa)) reg <- rbind(reg,data.frame(type="trans",gene=pa$gene,chr=pa$chr,
-      start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,stringsAsFactors=FALSE))
+      start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,
+      locus_id=NA_character_,stringsAsFactors=FALSE))
+  }
+
+  # Define physical loci from all target-cis and parent-TF windows together.
+  # Any connected interval component containing the target cis window is the
+  # cis locus in full. This prevents a TF window that directly overlaps the
+  # target cis region (and any TF window connected through it) from generating
+  # an artificial trans instrument set inside the same local LD neighbourhood.
+  component <- integer(nrow(reg)); next_component <- 0L
+  for (ch in unique(reg$chr)) {
+    oi <- which(reg$chr==ch)
+    oi <- oi[order(reg$start[oi],reg$end[oi],reg$type[oi],reg$gene[oi])]
+    current <- 0L; current_end <- -Inf
+    for (idx in oi) {
+      if (current==0L || reg$start[idx] > current_end) {
+        next_component <- next_component + 1L
+        current <- next_component
+        current_end <- reg$end[idx]
+      } else {
+        current_end <- max(current_end,reg$end[idx])
+      }
+      component[idx] <- current
+    }
+  }
+  for (cc in unique(component)) {
+    jj <- which(component==cc)
+    if (any(reg$type[jj]=="cis")) {
+      reg$locus_id[jj] <- "cis"
+    } else {
+      reg$locus_id[jj] <- paste0("TF:",paste(sort(unique(reg$gene[jj])),collapse="+"))
+    }
   }
   rownames(reg) <- NULL
   reg
@@ -150,21 +203,40 @@
 
 .cater_candidate_map <- function(qtl, regions) {
   if (is.null(regions)||!nrow(qtl)) return(data.frame())
-  cis <- regions[regions$type=="cis",,drop=FALSE]
-  is_cis <- qtl$chr==cis$chr[1] & qtl$pos>=cis$start[1] & qtl$pos<=cis$end[1]
-  tr <- regions[regions$type=="trans",,drop=FALSE]
-  hits <- vector("list",nrow(qtl))
+  if (!"locus_id" %in% names(regions) || any(is.na(regions$locus_id)|!nzchar(regions$locus_id)))
+    .cater_stop("Candidate regions require a physical locus_id")
+
+  # The cis locus is the full connected component containing the target cis
+  # window, including any overlapping parent-TF windows.
+  cis_regions <- regions[regions$locus_id=="cis",,drop=FALSE]
+  is_cis <- rep(FALSE,nrow(qtl))
+  if (nrow(cis_regions)) for (k in seq_len(nrow(cis_regions))) {
+    is_cis <- is_cis | (qtl$chr==cis_regions$chr[k] &
+                        qtl$pos>=cis_regions$start[k] & qtl$pos<=cis_regions$end[k])
+  }
+
+  tr <- regions[regions$type=="trans" & regions$locus_id!="cis",,drop=FALSE]
+  hits <- vector("list",nrow(qtl)); loci <- vector("list",nrow(qtl))
   if (nrow(tr)) for (k in seq_len(nrow(tr))) {
     z <- qtl$chr==tr$chr[k] & qtl$pos>=tr$start[k] & qtl$pos<=tr$end[k] & !is_cis
-    if (any(z)) hits[z] <- lapply(hits[z], function(x) c(x,tr$gene[k]))
+    if (any(z)) {
+      hits[z] <- lapply(hits[z], function(x) c(x,tr$gene[k]))
+      loci[z] <- lapply(loci[z], function(x) c(x,tr$locus_id[k]))
+    }
   }
   is_trans <- lengths(hits)>0L
   keep <- is_cis|is_trans
   if (!any(keep)) return(data.frame())
   parents <- vapply(hits[keep],function(x) if(length(x)) paste(sort(unique(x)),collapse=";") else "",character(1))
+  physical_locus <- vapply(loci[keep],function(x) {
+    u <- sort(unique(x[nzchar(x)]))
+    if (!length(u)) return("")
+    if (length(u)!=1L) .cater_stop("A trans SNP was assigned to multiple physical TF loci")
+    u
+  },character(1))
   data.frame(snp=qtl$snp[keep],source=ifelse(is_cis[keep],"cis","trans"),
              parent_tf=parents,
-             locus_id=ifelse(is_cis[keep],"cis",paste0("TF:",parents)),
+             locus_id=ifelse(is_cis[keep],"cis",physical_locus),
              stringsAsFactors=FALSE)
 }
 
@@ -232,11 +304,25 @@
 
 
 .cater_run_cojo <- function(qtl,candidate_map,ld_bfile,manc_cojo_bin,cojo_p,
-                            cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose) {
+                            cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose,
+                            plink_bin="plink",enable_ld_diagnosis=TRUE,
+                            ld_diag_loglr=2,ld_diag_abs_z=2) {
   if (length(ld_bfile)!=1L || !nzchar(ld_bfile)) .cater_stop("Current CATER-MR expects one COJO LD cohort")
   if (!all(file.exists(paste0(ld_bfile,c(".bed",".bim",".fam"))))) .cater_stop("ld_bfile must be a PLINK prefix: %s",ld_bfile)
   exe <- Sys.which(manc_cojo_bin); if (!nzchar(exe)) .cater_stop("Cannot find Manc-COJO executable '%s'",manc_cojo_bin)
   dir.create(dirname(prefix),recursive=TRUE,showWarnings=FALSE); .cater_remove_prefix_outputs(prefix)
+  diag_res <- list(candidate_map=candidate_map,diagnostics=data.frame(),removed=character())
+  if (isTRUE(enable_ld_diagnosis)) {
+    diag_res <- .cater_ld_diagnosis_filter(qtl,candidate_map,ld_bfile,plink_bin,cojo_threads,prefix,
+      loglr_cutoff=ld_diag_loglr,abs_z_cutoff=ld_diag_abs_z,verbose=verbose)
+    candidate_map <- diag_res$candidate_map
+    if (nrow(diag_res$diagnostics)) utils::write.table(diag_res$diagnostics,paste0(prefix,".ld_diagnosis.tsv"),
+      sep="\t",quote=FALSE,row.names=FALSE)
+  }
+  finish <- function(selected=data.frame(),selected_step=selected,joint_removed=character(),ld=matrix(numeric(),0,0))
+    list(selected=selected,selected_step=selected_step,joint_removed=joint_removed,ld=ld,
+         ld_diagnosis=diag_res$diagnostics,ld_diagnosis_removed=diag_res$removed)
+  if (!nrow(candidate_map)) return(finish())
   ma <- paste0(prefix,".sumstat"); extract <- paste0(prefix,".candidate.snplist")
   .cater_write_cojo_ma(qtl,ma); writeLines(unique(candidate_map$snp),extract)
   sp <- paste0(prefix,".select")
@@ -246,8 +332,9 @@
   st <- system2(exe,args=.cater_quote_args(args),stdout=paste0(sp,".stdout"),stderr=paste0(sp,".stderr"))
   if (!identical(st,0L)) .cater_stop("Manc-COJO selection failed for %s",prefix)
   selected_step <- .cater_read_jma_ref(paste0(sp,".jma.cojo"))
-  if (!nrow(selected_step)) return(list(selected=selected_step,selected_step=selected_step,joint_removed=character(),ld=matrix(numeric(),0,0)))
-  if (nrow(selected_step)==1L) return(list(selected=selected_step,selected_step=selected_step,joint_removed=character(),ld=matrix(1,1,1,dimnames=list(selected_step$snp,selected_step$snp))))
+  if (!nrow(selected_step)) return(finish(selected=selected_step,selected_step=selected_step))
+  if (nrow(selected_step)==1L) return(finish(selected=selected_step,selected_step=selected_step,
+    ld=matrix(1,1,1,dimnames=list(selected_step$snp,selected_step$snp))))
   jp <- paste0(prefix,".joint"); .cater_remove_prefix_outputs(jp)
   args2 <- c("--bfile",ld_bfile,"--cojo-file",ma,"--extract",paste0(sp,".jma.cojo"),"2","header",
              "--cojo-joint","--thread-num",as.character(as.integer(cojo_threads)),"--output-all","--out",jp)
@@ -257,9 +344,8 @@
   if (!nrow(joint_ref)) .cater_stop("Manc-COJO joint retained no SNPs for %s",prefix)
   if (length(setdiff(joint_ref$snp,selected_step$snp))) .cater_stop("Manc-COJO joint output contains unselected SNPs for %s",prefix)
   ld <- .cater_read_manc_ldr(paste0(jp,".ldr.cojo"),joint_ref$snp)
-  list(selected=joint_ref,selected_step=selected_step,joint_removed=setdiff(selected_step$snp,joint_ref$snp),ld=ld)
+  finish(selected=joint_ref,selected_step=selected_step,joint_removed=setdiff(selected_step$snp,joint_ref$snp),ld=ld)
 }
-
 
 .cater_joint_ld <- function(qtl,snps,ld_bfile,manc_cojo_bin,cojo_threads,prefix,verbose) {
   requested <- unique(as.character(snps)); requested <- requested[requested %in% qtl$snp]
@@ -591,24 +677,34 @@
 
 
 .cater_run_sibling_cis <- function(gene,annotation,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
-                                   cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose) {
+                                   cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose,
+                                   plink_bin="plink",enable_ld_diagnosis=TRUE,
+                                   ld_diag_loglr=2,ld_diag_abs_z=2,drop_palindromic=TRUE,exclude_mhc=TRUE) {
+  ga<-annotation[annotation$symbol==gene,,drop=FALSE]
+  if(isTRUE(exclude_mhc)&&nrow(ga)&&.cater_is_mhc_hg38(ga$chr[1],ga$tss[1])) return(NULL)
   q<-.cater_read_gene(gene,eqtl_dir,qtl_n);if(is.null(q)) return(NULL)
+  q<-.cater_filter_analysis_variants(q,drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc)
   reg<-.cater_make_regions(gene,character(),annotation,cis_window,cis_window)
   if(is.null(reg)) return(NULL)
   cmap<-.cater_candidate_map(q,reg);if(!nrow(cmap)) return(list(qtl=q,selected=data.frame()))
-  co<-.cater_run_cojo(q,cmap,ld_bfile,manc_cojo_bin,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose)
+  co<-.cater_run_cojo(q,cmap,ld_bfile,manc_cojo_bin,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,prefix,verbose,
+    plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z)
   list(qtl=q,selected=co$selected)
 }
 
 .cater_build_mvmr <- function(target,target_qtl,target_sel,active_siblings,annotation,eqtl_dir,qtl_n,
                               ld_bfile,manc_cojo_bin,cis_window,cojo_p,cojo_wind_kb,cojo_collinear,
                               cojo_threads,outdir,outcome,drop_palindromic,exposure_corr,min_cond_F,
-                              mvmr_max_r2,mvmr_max_condition,verbose) {
+                              mvmr_max_r2,mvmr_max_condition,verbose,plink_bin="plink",
+                              enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2,exclude_mhc=TRUE) {
   sibco<-list();union<-target_sel$snp
   for(z in active_siblings){
     pr<-file.path(outdir,"cojo_mvmr",target,z)
     x<-tryCatch(.cater_run_sibling_cis(z,annotation,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
-      cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,pr,verbose),error=function(e)NULL)
+      cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,pr,verbose,
+      plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,
+      ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z,
+      drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc),error=function(e)NULL)
     sibco[[z]]<-x
     if(!is.null(x)&&nrow(x$selected)) union<-unique(c(union,x$selected$snp))
   }
@@ -851,8 +947,16 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      sibling_fdr=0.05,enable_sibling_screen=TRUE,enable_mvmr=TRUE,
                      exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=NULL,mvmr_max_condition=1e4,
                      outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE,
-                     primary_policy=c("cis_anchor","screened_cater")) {
+                     primary_policy=c("cis_anchor","screened_cater"),plink_bin="plink",
+                     enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2,
+                     exclude_mhc=TRUE) {
   primary_policy<-match.arg(primary_policy)
+  if(length(plink_bin)!=1L||is.na(plink_bin)||!nzchar(as.character(plink_bin))) .cater_stop("plink_bin must be a non-empty scalar")
+  if(!is.logical(enable_ld_diagnosis)||length(enable_ld_diagnosis)!=1L||is.na(enable_ld_diagnosis)) .cater_stop("enable_ld_diagnosis must be TRUE or FALSE")
+  if(!is.logical(exclude_mhc)||length(exclude_mhc)!=1L||is.na(exclude_mhc)) .cater_stop("exclude_mhc must be TRUE or FALSE")
+  if(!is.logical(drop_palindromic)||length(drop_palindromic)!=1L||is.na(drop_palindromic)) .cater_stop("drop_palindromic must be TRUE or FALSE")
+  if(length(ld_diag_loglr)!=1L||!is.finite(ld_diag_loglr)||ld_diag_loglr<0) .cater_stop("ld_diag_loglr must be a finite non-negative scalar")
+  if(length(ld_diag_abs_z)!=1L||!is.finite(ld_diag_abs_z)||ld_diag_abs_z<0) .cater_stop("ld_diag_abs_z must be a finite non-negative scalar")
   if(!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s",eqtl_dir)
   if(!is.null(mvmr_max_r2) && (length(mvmr_max_r2)!=1L || !is.finite(mvmr_max_r2) ||
                                mvmr_max_r2<0 || mvmr_max_r2>1))
@@ -873,8 +977,11 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
 
   long<-list();summ<-list()
   empty_summary<-function(x,status) data.frame(cell_type=cell_type,target=x,trait=trait,status=status,
-    n_parent_tf=0,n_candidate_snp=0,n_cojo_signal=0,n_cis_signal=0,n_trans_signal=0,
-    n_ld_aligned_signal=0,n_mr_iv=0,n_mr_cis_iv=0,n_mr_trans_iv=0,
+    n_parent_tf=0,n_parent_tf_mhc_excluded=0,n_candidate_snp=0,n_mhc_excluded=0,n_palindromic_excluded=0,
+    n_ld_diag_removed=0,n_ld_diag_susie=0,
+    n_ld_reference_missing=0,n_ld_allele_mismatch=0,n_ld_nonfinite=0,ld_diag_lambda_max=NA_real_,
+    n_cojo_signal=0,n_cis_signal=0,n_trans_signal=0,n_ld_aligned_signal=0,
+    n_mr_iv=0,n_mr_cis_iv=0,n_mr_trans_iv=0,
     effective_F=NA,trans_information_fraction=NA,n_tf_anchor_tested=0,n_tf_anchor_fdr=0,
     n_sibling_candidate=0,n_sibling_active=0,n_sibling_incomplete=0,n_sibling_qtl_missing=0,
     n_sibling_iv_missing=0,sibling_screen_performed=FALSE,sibling_screen_complete=NA,
@@ -888,17 +995,48 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
   for(target in targets){
     .cater_msg(verbose,"[%s] starting",target)
     srow<-empty_summary(target,"START")
-    parents<-unique(grn$TF[grn$Target==target]);srow$n_parent_tf<-length(parents)
+    parents<-unique(grn$TF[grn$Target==target])
+    ta<-ann[ann$symbol==target,,drop=FALSE]
+    if(!nrow(ta)){srow$status<-"NO_TARGET_ANNOTATION";summ[[target]]<-srow;next}
+    if(isTRUE(exclude_mhc)&&.cater_is_mhc_hg38(ta$chr[1],ta$tss[1])){
+      srow$status<-"TARGET_IN_MHC_EXCLUDED";summ[[target]]<-srow;next
+    }
+    if(length(parents)&&isTRUE(exclude_mhc)){
+      pa<-ann[match(parents,ann$symbol),,drop=FALSE]
+      parent_mhc<-!is.na(pa$symbol)&.cater_is_mhc_hg38(pa$chr,pa$tss)
+      srow$n_parent_tf_mhc_excluded<-sum(parent_mhc)
+      parents<-parents[!parent_mhc]
+    }
+    srow$n_parent_tf<-length(parents)
     qtl<-.cater_read_gene(target,eqtl_dir,qtl_n)
     if(is.null(qtl)){srow$status<-"NO_EQTL_FILE";summ[[target]]<-srow;next}
+    qtl<-.cater_filter_analysis_variants(qtl,drop_palindromic=drop_palindromic,exclude_mhc=exclude_mhc)
+    aqc<-attr(qtl,"analysis_qc"); if(!is.null(aqc)){srow$n_mhc_excluded<-aqc$n_mhc_excluded;srow$n_palindromic_excluded<-aqc$n_palindromic_excluded}
     regions<-.cater_make_regions(target,parents,ann,cis_window,tf_window)
-    if(is.null(regions)){srow$status<-"NO_TARGET_ANNOTATION";summ[[target]]<-srow;next}
     cmap<-.cater_candidate_map(qtl,regions);srow$n_candidate_snp<-nrow(cmap)
     if(!nrow(cmap)){srow$status<-"NO_CANDIDATE_SNP";summ[[target]]<-srow;next}
     co<-tryCatch(.cater_run_cojo(qtl,cmap,ld_bfile,manc_cojo_bin,cojo_p,cojo_wind_kb,
-      cojo_collinear,cojo_threads,file.path(outdir,"cojo",target),verbose),error=function(e)e)
-    if(inherits(co,"error")){warning(sprintf("[%s] %s",target,conditionMessage(co)));srow$status<-"COJO_FAILED";summ[[target]]<-srow;next}
-    if(!nrow(co$selected)){srow$status<-"NO_COJO_SIGNAL";summ[[target]]<-srow;next}
+      cojo_collinear,cojo_threads,file.path(outdir,"cojo",target),verbose,
+      plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,
+      ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z),error=function(e)e)
+    if(inherits(co,"error")){
+      warning(sprintf("[%s] %s",target,conditionMessage(co)))
+      srow$status<-if(grepl("SuSiE-RSS|LD diagnosis|PLINK",conditionMessage(co))) "LD_DIAGNOSIS_FAILED" else "COJO_FAILED"
+      summ[[target]]<-srow;next
+    }
+    if(nrow(co$ld_diagnosis)){
+      dd<-co$ld_diagnosis
+      srow$n_ld_diag_removed<-sum(dd$remove,na.rm=TRUE)
+      srow$n_ld_diag_susie<-sum(dd$status=="SUSIE_LD_INCONSISTENT",na.rm=TRUE)
+      srow$n_ld_reference_missing<-sum(dd$status=="LD_REFERENCE_MISSING",na.rm=TRUE)
+      srow$n_ld_allele_mismatch<-sum(dd$status=="LD_ALLELE_MISMATCH",na.rm=TRUE)
+      srow$n_ld_nonfinite<-sum(dd$status=="LD_NONFINITE",na.rm=TRUE)
+      if(any(is.finite(dd$lambda))) srow$ld_diag_lambda_max<-max(dd$lambda[is.finite(dd$lambda)])
+    }
+    if(!nrow(co$selected)){
+      srow$status<-if(nrow(co$ld_diagnosis)&&all(co$ld_diagnosis$remove)) "NO_CANDIDATE_AFTER_LD_DIAGNOSIS" else "NO_COJO_SIGNAL"
+      summ[[target]]<-srow;next
+    }
     co_meta<-cmap[match(co$selected$snp,cmap$snp),,drop=FALSE]
     srow$n_cojo_signal<-nrow(co$selected)
     srow$n_cis_signal<-sum(co_meta$source=="cis",na.rm=TRUE)
@@ -958,7 +1096,9 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
     if(enable_mvmr&&length(sib$active)){
       net<-.cater_build_mvmr(target,qtl,co$selected,sib$active,ann,eqtl_dir,qtl_n,ld_bfile,manc_cojo_bin,
         cis_window,cojo_p,cojo_wind_kb,cojo_collinear,cojo_threads,outdir,outcome,drop_palindromic,
-        exposure_corr,min_cond_F,mvmr_max_r2,mvmr_max_condition,verbose)
+        exposure_corr,min_cond_F,mvmr_max_r2,mvmr_max_condition,verbose,
+        plink_bin=plink_bin,enable_ld_diagnosis=enable_ld_diagnosis,
+        ld_diag_loglr=ld_diag_loglr,ld_diag_abs_z=ld_diag_abs_z,exclude_mhc=exclude_mhc)
       srow$network_status<-net$status
       if(identical(net$status,"OK")){
         srow$beta_network<-net$beta[target];srow$se_network<-net$se[target];srow$p_network<-net$p[target]
