@@ -136,12 +136,12 @@ tr_locus <- reg_locus[reg_locus$type=="trans",,drop=FALSE]
 stopifnot(tr_locus$locus_id[tr_locus$gene=="A"]=="TF:A+B",
           tr_locus$locus_id[tr_locus$gene=="B"]=="TF:A+B",
           tr_locus$locus_id[tr_locus$gene=="C"]=="TF:C")
-q_locus <- data.frame(snp=paste0("g",1:4),chr=rep("1",4),
-                      pos=c(9500,10750,12000,20000),stringsAsFactors=FALSE)
+q_locus <- data.frame(snp=paste0("g",1:5),chr=rep("1",5),
+                      pos=c(9500,10750,12000,12500,20000),stringsAsFactors=FALSE)
 cm_locus <- .cater_candidate_map(q_locus,reg_locus)
-stopifnot(identical(cm_locus$parent_tf,c("A","A;B","B","C")),
-          identical(cm_locus$locus_id,c("TF:A+B","TF:A+B","TF:A+B","TF:C")))
+stopifnot(identical(cm_locus$parent_tf,c("A","A;B","B","B","C")),
+          identical(cm_locus$locus_id,c("TF:A+B","TF:A+B","TF:A+B","TF:A+B","TF:C")))
 gg <- .cater_ld_diagnosis_groups(q_locus,cm_locus)
-stopifnot(gg[1]==gg[2],gg[2]==gg[3],gg[4]!=gg[1])
+stopifnot(length(unique(gg[1:4]))==1L,gg[5]!=gg[1])
 
 cat("CATER-MR direct-core evidence-safety tests passed\n")
