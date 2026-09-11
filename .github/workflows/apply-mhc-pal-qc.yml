@@ -1,0 +1,30 @@
+name: Apply hg38 MHC and palindromic QC
+
+on:
+  push:
+    branches:
+      - feature/susie-ld-diagnosis-pre-cojo
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/susie-ld-diagnosis-pre-cojo
+      - name: Apply patch
+        run: python .github/scripts/apply_mhc_pal_qc.py
+      - name: Validate patch
+        run: git diff --check
+      - name: Commit patch and remove patch machinery
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add R/CATER_MR_core_v05.R LD_DIAGNOSIS.md tests/v06_hardening_smoke.R
+          git rm .github/scripts/apply_mhc_pal_qc.py .github/workflows/apply-mhc-pal-qc.yml
+          git commit -m "Exclude hg38 MHC and palindromic variants before COJO"
+          git push origin HEAD:feature/susie-ld-diagnosis-pre-cojo
