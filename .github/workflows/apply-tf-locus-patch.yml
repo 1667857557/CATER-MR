@@ -1,0 +1,33 @@
+name: Apply physical TF locus merge patch
+
+on:
+  push:
+    branches:
+      - feature/susie-ld-diagnosis-pre-cojo
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/susie-ld-diagnosis-pre-cojo
+      - name: Apply patch
+        run: python .github/scripts/apply_tf_locus_patch.py
+      - name: Validate patch
+        run: |
+          git diff --check
+          grep -q 'locus_id="cis"' R/CATER_MR_core_v05.R
+          grep -q 'TF:A+B' tests/v06_hardening_smoke.R
+      - name: Commit direct-core change and remove patch machinery
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add R/CATER_MR_core_v05.R R/LD_diagnosis_precojo.R tests/v06_hardening_smoke.R LD_DIAGNOSIS.md
+          git rm .github/scripts/apply_tf_locus_patch.py .github/workflows/apply-tf-locus-patch.yml
+          git commit -m "Merge overlapping TF windows into one physical locus"
+          git push origin HEAD:feature/susie-ld-diagnosis-pre-cojo
