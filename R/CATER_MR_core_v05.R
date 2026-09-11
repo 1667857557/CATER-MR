@@ -1083,7 +1083,7 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
   }
   if(nrow(sumdf)){
     sumdf$primary_q<-NA_real_;ii<-which(is.finite(sumdf$primary_p))
-    if(length(ii)) sumdf$primary_q<-p.adjust(sumdf$primary_p[ii],method="BH")
+    if(length(ii)) sumdf$primary_q[ii]<-p.adjust(sumdf$primary_p[ii],method="BH")
     utils::write.table(sumdf,file.path(outdir,"cater_mr_target_summary.tsv"),sep="\t",quote=FALSE,row.names=FALSE)
   }
   structure(list(results=longdf,targets=sumdf),class="cater_mr_result")
