@@ -1,0 +1,35 @@
+name: Update README architecture
+
+on:
+  push:
+    branches: [feature/susie-ld-diagnosis-pre-cojo]
+    paths:
+      - '.github/scripts/update_readme_v073.py'
+      - '.github/workflows/update-readme-v073.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/susie-ld-diagnosis-pre-cojo
+      - name: Update README
+        run: python .github/scripts/update_readme_v073.py
+      - name: Validate patch
+        run: |
+          git diff --check
+          grep -F '## Current design (v0.7.3)' README.md
+          grep -F 'SuSiE-RSS is a pre-COJO consistency QC' README.md
+          grep -F 'Fine-mapping can be added as a sensitivity' README.md
+      - name: Commit README and remove temporary updater
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/scripts/update_readme_v073.py .github/workflows/update-readme-v073.yml
+          git add README.md
+          git commit -m 'Update README to current CATER-MR architecture'
+          git push
