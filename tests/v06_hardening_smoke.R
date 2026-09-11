@@ -90,4 +90,19 @@ d_occam <- .cater_primary_decision(fits_occam,has_trans=TRUE,sibling_screen_perf
 stopifnot(d_occam$model=="cis",d_occam$status=="OK_CIS_ANCHOR_PRIMARY")
 stopifnot("primary_policy" %in% names(formals(cater_mr)))
 
+# 12. Backward compatibility: new options must not shift established trailing positional arguments.
+formal_names <- names(formals(cater_mr))
+stopifnot(identical(tail(formal_names, 4L), c("outdir","drop_palindromic","verbose","primary_policy")))
+
+# 13. screened_cater promotes a valid combined fit, but a failed augmented fit must fall back to cis.
+fits_combined_fail <- list(cis=mkfit("OK",b=.11,se=.04,p=.01),
+                           trans=mkfit("OK"),combined=mkfit("LD_SINGULAR"))
+d_combined_fail <- .cater_primary_decision(
+  fits_combined_fail,has_trans=TRUE,sibling_screen_performed=TRUE,
+  sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE,
+  primary_policy="screened_cater")
+stopifnot(d_combined_fail$model=="cis",
+          d_combined_fail$status=="CATER_COMBINED_FAILED_CIS_FALLBACK",
+          d_combined_fail$evidence_status=="COMBINED_FIT_FAILED")
+
 cat("CATER-MR direct-core evidence-safety tests passed\n")

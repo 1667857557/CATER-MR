@@ -721,6 +721,10 @@
     use_fit("cis",fits$cis,"OK_CIS_ANCHOR_PRIMARY","CATER_SENSITIVITY_UNCALIBRATED")
   } else if(identical(fits$combined$status,"OK")) {
     use_fit("combined",fits$combined,"OK_CATER","NO_DETECTED_SIBLING_COPERTURBATION")
+  } else {
+    # screened_cater is an opt-in promotion policy, not permission to discard a
+    # valid conservative cis estimate when the augmented cis+trans fit fails.
+    use_fit("cis",fits$cis,"CATER_COMBINED_FAILED_CIS_FALLBACK","COMBINED_FIT_FAILED")
   }
   out
 }
@@ -846,8 +850,8 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      cojo_collinear=0.9,cojo_threads=1L,qtl_n=NULL,
                      sibling_fdr=0.05,enable_sibling_screen=TRUE,enable_mvmr=TRUE,
                      exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=NULL,mvmr_max_condition=1e4,
-                     primary_policy=c("cis_anchor","screened_cater"),
-                     outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE) {
+                     outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE,
+                     primary_policy=c("cis_anchor","screened_cater")) {
   primary_policy<-match.arg(primary_policy)
   if(!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s",eqtl_dir)
   if(!is.null(mvmr_max_r2) && (length(mvmr_max_r2)!=1L || !is.finite(mvmr_max_r2) ||
