@@ -105,8 +105,6 @@ p.write_text(s)
 # 3) Regression tests for all remaining Codex findings.
 p = Path("tests/v06_hardening_smoke.R")
 s = p.read_text()
-anchor = 'cat("CATER-MR direct-core evidence-safety tests passed\\n")\n'
-assert anchor in s, "test footer not found"
 extra = r'''# 20. Palindromic A/T and C/G variants are never signed from allele labels alone.
 qp <- data.frame(snp=c("p1","p2","n1"),a1=c("A","C","A"),a2=c("T","G","G"),
                  beta=c(.2,.2,.2),se=c(.1,.1,.1),stringsAsFactors=FALSE)
@@ -140,7 +138,9 @@ for (bad_flag in list(1,"TRUE")) {
 }
 
 '''
-s = s.replace(anchor, extra + anchor, 1)
+m = re.search(r'cat\("CATER-MR direct-core evidence-safety tests passed\\n"\)', s)
+assert m, "test footer not found"
+s = s[:m.start()] + extra + s[m.start():]
 p.write_text(s)
 
 # 4) Documentation of the conservative palindromic handling and fail-closed LD rows.
