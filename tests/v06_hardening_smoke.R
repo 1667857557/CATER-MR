@@ -80,7 +80,6 @@ badN<-good;badN$eqtl_n_unit<-"cells";stopifnot(inherits(try(.cater_validate_inpu
 badF<-good;badF$eqtl_full_summary<-FALSE;stopifnot(inherits(try(.cater_validate_input_manifest(badF,TRUE),silent=TRUE),"try-error"))
 badB<-good;badB$ld_build<-"GRCh37";stopifnot(inherits(try(.cater_validate_input_manifest(badB,TRUE),silent=TRUE),"try-error"))
 
-
 # 11. Direct-core Occam semantics: no qtl-outcome-overlap field and cis is the default primary anchor.
 manifest_occam <- .cater_validate_input_manifest(good, TRUE)
 stopifnot(!"qtl_outcome_overlap" %in% names(manifest_occam))
@@ -108,15 +107,14 @@ stopifnot(d_combined_fail$model=="cis",
           d_combined_fail$status=="CATER_COMBINED_FAILED_CIS_FALLBACK",
           d_combined_fail$evidence_status=="COMBINED_FIT_FAILED")
 
-
-
-# 14. Pre-COJO z/LD alignment handles direct swaps and strand complements.
+# 14. Pre-COJO z/LD alignment accepts only direct A1/A2 same/swap coding.
 qz <- data.frame(snp=paste0("rs",1:5),a1=c("A","A","A","A","A"),a2=c("G","G","C","C","C"),
                  beta=rep(.2,5),se=rep(.1,5),stringsAsFactors=FALSE)
 rz <- data.frame(snp=paste0("rs",1:5),ld_a1=c("A","G","T","G","A"),ld_a2=c("G","A","G","T","G"),stringsAsFactors=FALSE)
 az <- .cater_align_z_to_plink(qz,rz)
 stopifnot(identical(az$alignment,c("same","swap","strand_same","strand_swap","mismatch")))
-stopifnot(isTRUE(all.equal(az$z[1:4],c(2,-2,2,-2),tolerance=1e-12)),is.na(az$z[5]),!az$allele_match[5])
+stopifnot(isTRUE(all.equal(az$z[1:2],c(2,-2),tolerance=1e-12)))
+stopifnot(all(is.na(az$z[3:5])),identical(az$allele_match,c(TRUE,TRUE,FALSE,FALSE,FALSE)))
 
 # 15. mapgen/SuSiE-RSS detection rule is strict: logLR > 2 and |z| > 2.
 cd <- data.frame(z=c(2.1,2,5,-3),logLR=c(2.1,3,1,2.2))
@@ -125,5 +123,9 @@ stopifnot(identical(.cater_ld_outlier_index(cd,2,2),c(1L,4L)))
 # 16. The public API exposes LD diagnosis controls while retaining legacy argument positions.
 stopifnot(all(c("plink_bin","enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z") %in% names(formals(cater_mr))))
 stopifnot(identical(formals(cater_mr)$enable_ld_diagnosis,TRUE))
+
+# 17. Diagnostic LD validation leaves PSD/eigenvalue handling to susieR.
+Rd <- matrix(c(1,.9,.9,.9,1,.6199,.9,.6199,1),3,3,byrow=TRUE)
+stopifnot(identical(dim(.cater_validate_diag_ld(Rd)),c(3L,3L)))
 
 cat("CATER-MR direct-core evidence-safety tests passed\n")
