@@ -39,6 +39,40 @@
           is.finite(conditional_dist$z) & abs(conditional_dist$z) > abs_z_cutoff)
 }
 
+.cater_ld_diagnosis_groups <- function(q, candidate_map) {
+  if (nrow(q)!=nrow(candidate_map)) .cater_stop("LD diagnosis grouping requires aligned qtl and candidate_map rows")
+  if (!nrow(candidate_map)) return(character())
+  groups <- rep(NA_character_,nrow(candidate_map))
+  cis <- candidate_map$source=="cis"
+  groups[cis] <- paste(q$chr[cis],"cis",sep="|")
+
+  ti <- which(candidate_map$source=="trans")
+  if (length(ti)) {
+    tokens <- .cater_parent_tokens(candidate_map$parent_tf[ti])
+    if (any(lengths(tokens)==0L)) .cater_stop("Trans candidate is missing its parent TF locus")
+    tfs <- sort(unique(unlist(tokens,use.names=FALSE)))
+    components <- lapply(tfs,function(x)x)
+    # A SNP annotated to A;B proves that the A and B TF windows overlap at that
+    # genomic position. Merge the complete connected component, so A, A;B and B
+    # are diagnosed together rather than treated as three artificial loci.
+    for (v in tokens) {
+      hit <- which(vapply(components,function(z) length(intersect(z,v))>0L,logical(1)))
+      if (length(hit)>1L) {
+        merged <- sort(unique(unlist(components[hit],use.names=FALSE)))
+        components <- c(components[-hit],list(merged))
+      }
+    }
+    component_label <- vapply(components,function(z) paste(sort(z),collapse="+"),character(1))
+    for (j in seq_along(ti)) {
+      hit <- which(vapply(components,function(z) length(intersect(z,tokens[[j]]))>0L,logical(1)))
+      if (length(hit)!=1L) .cater_stop("Could not resolve one merged TF LD locus for candidate %s",candidate_map$snp[ti[j]])
+      groups[ti[j]] <- paste(q$chr[ti[j]],paste0("TF:",component_label[hit]),sep="|")
+    }
+  }
+  if (any(is.na(groups))) .cater_stop("LD diagnosis grouping found an unsupported candidate source")
+  groups
+}
+
 .cater_validate_diag_ld <- function(R, label="diagnostic LD", tol=1e-6) {
   R <- as.matrix(R)
   if (!is.numeric(R) || nrow(R)!=ncol(R)) .cater_stop("%s must be a square numeric matrix",label)
@@ -86,11 +120,13 @@
   args1 <- c("--bfile",ld_bfile,"--extract",extract,"--keep-allele-order","--make-bed",
              "--threads",as.character(as.integer(threads)),"--out",refp)
   st <- system2(exe,args=.cater_quote_args(args1),stdout=paste0(refp,".stdout"),stderr=paste0(refp,".stderr"))
-  ref_all <- .cater_read_plink_bim(paste0(refp,".bim"))
-  if (!identical(st,0L) && !nrow(ref_all)) {
+  if (!identical(st,0L)) {
     logtxt <- if (file.exists(paste0(refp,".log"))) paste(readLines(paste0(refp,".log"),warn=FALSE),collapse="\n") else ""
-    if (!grepl("No variants remaining",logtxt,fixed=TRUE)) .cater_stop("PLINK subset generation failed for LD diagnosis: %s",prefix)
+    if (grepl("No variants remaining",logtxt,fixed=TRUE))
+      return(list(R=matrix(numeric(),0,0),ref=data.frame(),ref_all=data.frame(),missing=requested,nonfinite=character()))
+    .cater_stop("PLINK subset generation failed for LD diagnosis: %s",prefix)
   }
+  ref_all <- .cater_read_plink_bim(paste0(refp,".bim"))
   if (!nrow(ref_all)) return(list(R=matrix(numeric(),0,0),ref=data.frame(),ref_all=ref_all,missing=requested,nonfinite=character()))
   missing <- setdiff(requested,ref_all$snp)
   if (nrow(ref_all)==1L) {
@@ -141,14 +177,14 @@
   if (!nrow(candidate_map)) return(list(candidate_map=candidate_map,diagnostics=data.frame(),removed=character()))
   q <- qtl[match(candidate_map$snp,qtl$snp),,drop=FALSE]
   if (any(is.na(q$snp))) .cater_stop("Candidate map contains SNPs absent from eQTL summary data")
-  groups <- paste(q$chr,candidate_map$locus_id,sep="|")
+  groups <- .cater_ld_diagnosis_groups(q,candidate_map)
   tabs <- list(); ug <- unique(groups)
   for (gidx in seq_along(ug)) {
     ii <- which(groups==ug[gidx]); ids <- candidate_map$snp[ii]; qq <- q[ii,,drop=FALSE]
     cm <- candidate_map[ii,,drop=FALSE]
     .cater_msg(verbose,"LD diagnosis %d/%d: %s (%d SNPs)",gidx,length(ug),ug[gidx],length(ids))
     pl <- .cater_plink_ld(ids,ld_bfile,plink_bin,threads,paste0(prefix,".lddiag.",gidx))
-    rows <- data.frame(snp=ids,chr=qq$chr,locus_id=cm$locus_id,source=cm$source,
+    rows <- data.frame(snp=ids,chr=qq$chr,locus_id=cm$locus_id,ld_locus_id=rep(ug[gidx],length(ids)),source=cm$source,
       status=NA_character_,remove=FALSE,qtl_a1=qq$a1,qtl_a2=qq$a2,ld_a1=NA_character_,ld_a2=NA_character_,
       z_raw=qq$beta/qq$se,z=NA_real_,alignment=NA_character_,condmean=NA_real_,condvar=NA_real_,
       z_std_diff=NA_real_,logLR=NA_real_,p_diff=NA_real_,lambda=NA_real_,n_used=NA_real_,stringsAsFactors=FALSE)
