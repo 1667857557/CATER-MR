@@ -95,6 +95,8 @@ sib <- .cater_sibling_screen("X",hs,gs,rs,Ls,td,500,0.05)
 stopifnot(sib$n_candidate==1L,sib$n_incomplete==1L,sib$n_iv_missing==1L,!sib$complete)
 stopifnot(sib$table$n_iv_requested==2L,sib$table$n_iv_tested==1L,
           sib$table$status=="PARTIAL_SNP_COVERAGE",isTRUE(sib$table$active))
+stopifnot("co_perturbation_detected" %in% names(sib$table),
+          sib$table$interpretation=="DETECTED_SIBLING_COPERTURBATION")
 unlink(td,recursive=TRUE)
 
 # Unresolved or incompletely screened trans estimates never populate primary_*.
