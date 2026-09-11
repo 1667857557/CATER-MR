@@ -9,7 +9,7 @@ Candidate loci are defined from the target cis window and all parent-TF windows 
 For each physical local cis/TF locus, CATER-MR:
 
 1. merges the target cis window and parent-TF windows by genomic interval into connected physical loci; any component containing the target cis window is the full cis locus, while TF-only components remain trans loci;
-2. assigns candidate SNPs to these physical loci while retaining the exact parent-TF window membership in `parent_tf`;
+2. assigns candidate SNPs to these physical loci; `parent_tf` is retained only for SNPs in TF-only trans components, whereas SNPs absorbed into the cis component have no trans parent assignment;
 3. extracts candidate variants for that locus from the configured PLINK LD reference;
 4. computes a signed allele-count correlation matrix with PLINK 1.9 (`--r square`);
 5. aligns eQTL z-score signs to direct PLINK A1/A2 same/swap coding; strand-complement relationships are recorded for audit but excluded because the downstream CATER-MR COJO/MR allele contract also requires direct A1/A2 agreement;
