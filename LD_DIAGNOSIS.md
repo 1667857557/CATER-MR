@@ -2,13 +2,13 @@
 
 CATER-MR performs an LD/summary-statistic consistency gate before every Manc-COJO selection step by default.
 
-Trans candidates are defined by local parent-TF windows. TF windows on the same chromosome that overlap are merged into one physical locus component **before candidate SNP assignment**. For example, overlapping A and B windows share `locus_id=TF:A+B`. The original TF windows remain available for biological attribution, so a SNP can still have `parent_tf=A`, `B`, or `A;B` according to its actual genomic position.
+Candidate loci are defined from the target cis window and all parent-TF windows together. Overlapping intervals on the same chromosome are merged into connected physical components before candidate SNP assignment. Any component containing the target cis window is treated in full as the cis locus (`locus_id=cis`), including TF-window extensions connected to it; those SNPs are not reused as trans instruments. Components containing only TF windows remain local trans loci such as `TF:A+B`.
 
 ## Method
 
 For each physical local cis/TF locus, CATER-MR:
 
-1. merges overlapping parent-TF windows by genomic interval into connected physical loci; the target cis window remains its own locus;
+1. merges the target cis window and parent-TF windows by genomic interval into connected physical loci; any component containing the target cis window is the full cis locus, while TF-only components remain trans loci;
 2. assigns candidate SNPs to these physical loci while retaining the exact parent-TF window membership in `parent_tf`;
 3. extracts candidate variants for that locus from the configured PLINK LD reference;
 4. computes a signed allele-count correlation matrix with PLINK 1.9 (`--r square`);
@@ -16,7 +16,7 @@ For each physical local cis/TF locus, CATER-MR:
 6. estimates the SuSiE-RSS consistency parameter with `susieR::estimate_s_rss()` and obtains conditional z-score diagnostics with `susieR::kriging_rss()`;
 7. removes variants satisfying `logLR > 2 & abs(z) > 2` before Manc-COJO runs.
 
-`locus_id` is the physical cis/TF locus used for LD diagnosis and is also propagated with the retained instruments. `parent_tf` remains the biological attribution field. Thus overlapping TF windows are one locus for LD/COJO bookkeeping without erasing whether an individual SNP lies in A, B, or both windows.
+`locus_id` is the physical cis/TF locus used for LD diagnosis and is also propagated with the retained instruments. TF-only components retain `parent_tf` for biological attribution. If a TF component overlaps the target cis component, the entire connected component is classified as cis and its SNPs are deliberately not assigned a trans parent, avoiding cis/trans double interpretation within one local LD neighbourhood.
 
 Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the direct A1/A2 contract are also removed and explicitly reported. A one-variant locus cannot be conditionally diagnosed and is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
 

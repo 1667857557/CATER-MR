@@ -2,7 +2,7 @@
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
 # Direct implementation: GRN-gated cis/trans selection + standard LD-aware MR.
 
-.CATER_VERSION <- "0.7.1"
+.CATER_VERSION <- "0.7.2"
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -136,39 +136,43 @@
   if (!nrow(ta)) return(NULL)
   reg <- data.frame(type="cis",gene=target,chr=ta$chr[1],
                     start=max(1,ta$tss[1]-cis_window),end=ta$tss[1]+cis_window,
-                    locus_id="cis",stringsAsFactors=FALSE)
+                    locus_id=NA_character_,stringsAsFactors=FALSE)
   if (length(parents)) {
     pa <- annotation[match(parents,annotation$symbol),,drop=FALSE]
     pa$gene <- parents
     pa <- pa[!is.na(pa$chr)&is.finite(pa$tss),,drop=FALSE]
-    if (nrow(pa)) {
-      tr <- data.frame(type="trans",gene=pa$gene,chr=pa$chr,
-        start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,
-        locus_id=NA_character_,stringsAsFactors=FALSE)
-      # Overlapping TF windows define one physical locus before SNP assignment.
-      # Original windows remain separate rows so parent_tf still records the TF
-      # window(s) each SNP actually occupies.
-      component <- integer(nrow(tr)); next_component <- 0L
-      for (ch in unique(tr$chr)) {
-        oi <- which(tr$chr==ch)
-        oi <- oi[order(tr$start[oi],tr$end[oi],tr$gene[oi])]
-        current <- 0L; current_end <- -Inf
-        for (idx in oi) {
-          if (current==0L || tr$start[idx] > current_end) {
-            next_component <- next_component + 1L
-            current <- next_component
-            current_end <- tr$end[idx]
-          } else {
-            current_end <- max(current_end,tr$end[idx])
-          }
-          component[idx] <- current
-        }
+    if (nrow(pa)) reg <- rbind(reg,data.frame(type="trans",gene=pa$gene,chr=pa$chr,
+      start=pmax(1,pa$tss-tf_window),end=pa$tss+tf_window,
+      locus_id=NA_character_,stringsAsFactors=FALSE))
+  }
+
+  # Define physical loci from all target-cis and parent-TF windows together.
+  # Any connected interval component containing the target cis window is the
+  # cis locus in full. This prevents a TF window that directly overlaps the
+  # target cis region (and any TF window connected through it) from generating
+  # an artificial trans instrument set inside the same local LD neighbourhood.
+  component <- integer(nrow(reg)); next_component <- 0L
+  for (ch in unique(reg$chr)) {
+    oi <- which(reg$chr==ch)
+    oi <- oi[order(reg$start[oi],reg$end[oi],reg$type[oi],reg$gene[oi])]
+    current <- 0L; current_end <- -Inf
+    for (idx in oi) {
+      if (current==0L || reg$start[idx] > current_end) {
+        next_component <- next_component + 1L
+        current <- next_component
+        current_end <- reg$end[idx]
+      } else {
+        current_end <- max(current_end,reg$end[idx])
       }
-      for (cc in unique(component)) {
-        jj <- which(component==cc)
-        tr$locus_id[jj] <- paste0("TF:",paste(sort(unique(tr$gene[jj])),collapse="+"))
-      }
-      reg <- rbind(reg,tr)
+      component[idx] <- current
+    }
+  }
+  for (cc in unique(component)) {
+    jj <- which(component==cc)
+    if (any(reg$type[jj]=="cis")) {
+      reg$locus_id[jj] <- "cis"
+    } else {
+      reg$locus_id[jj] <- paste0("TF:",paste(sort(unique(reg$gene[jj])),collapse="+"))
     }
   }
   rownames(reg) <- NULL
@@ -177,9 +181,19 @@
 
 .cater_candidate_map <- function(qtl, regions) {
   if (is.null(regions)||!nrow(qtl)) return(data.frame())
-  cis <- regions[regions$type=="cis",,drop=FALSE]
-  is_cis <- qtl$chr==cis$chr[1] & qtl$pos>=cis$start[1] & qtl$pos<=cis$end[1]
-  tr <- regions[regions$type=="trans",,drop=FALSE]
+  if (!"locus_id" %in% names(regions) || any(is.na(regions$locus_id)|!nzchar(regions$locus_id)))
+    .cater_stop("Candidate regions require a physical locus_id")
+
+  # The cis locus is the full connected component containing the target cis
+  # window, including any overlapping parent-TF windows.
+  cis_regions <- regions[regions$locus_id=="cis",,drop=FALSE]
+  is_cis <- rep(FALSE,nrow(qtl))
+  if (nrow(cis_regions)) for (k in seq_len(nrow(cis_regions))) {
+    is_cis <- is_cis | (qtl$chr==cis_regions$chr[k] &
+                        qtl$pos>=cis_regions$start[k] & qtl$pos<=cis_regions$end[k])
+  }
+
+  tr <- regions[regions$type=="trans" & regions$locus_id!="cis",,drop=FALSE]
   hits <- vector("list",nrow(qtl)); loci <- vector("list",nrow(qtl))
   if (nrow(tr)) for (k in seq_len(nrow(tr))) {
     z <- qtl$chr==tr$chr[k] & qtl$pos>=tr$start[k] & qtl$pos<=tr$end[k] & !is_cis

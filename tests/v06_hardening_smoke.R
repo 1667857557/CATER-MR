@@ -144,4 +144,22 @@ stopifnot(identical(cm_locus$parent_tf,c("A","A;B","B","B","C")),
 gg <- .cater_ld_diagnosis_groups(q_locus,cm_locus)
 stopifnot(length(unique(gg[1:4]))==1L,gg[5]!=gg[1])
 
+# 19. A TF window connected to the target cis window is absorbed into the full cis locus.
+# A directly overlaps target cis; B overlaps A, so the whole connected component is cis.
+ann_cis_tf <- data.frame(symbol=c("X","A","B","C"),chr=rep("1",4),
+                         tss=c(10000,11500,13000,20000),stringsAsFactors=FALSE)
+reg_cis_tf <- .cater_make_regions("X",c("A","B","C"),ann_cis_tf,cis_window=1000,tf_window=1000)
+stopifnot(reg_cis_tf$locus_id[reg_cis_tf$gene=="X"]=="cis",
+          reg_cis_tf$locus_id[reg_cis_tf$gene=="A"]=="cis",
+          reg_cis_tf$locus_id[reg_cis_tf$gene=="B"]=="cis",
+          reg_cis_tf$locus_id[reg_cis_tf$gene=="C"]=="TF:C")
+q_cis_tf <- data.frame(snp=paste0("ct",1:4),chr=rep("1",4),
+                       pos=c(9500,11500,13000,20000),stringsAsFactors=FALSE)
+cm_cis_tf <- .cater_candidate_map(q_cis_tf,reg_cis_tf)
+stopifnot(identical(cm_cis_tf$source,c("cis","cis","cis","trans")),
+          identical(cm_cis_tf$locus_id,c("cis","cis","cis","TF:C")),
+          identical(cm_cis_tf$parent_tf,c("","","","C")))
+gg_cis_tf <- .cater_ld_diagnosis_groups(q_cis_tf,cm_cis_tf)
+stopifnot(length(unique(gg_cis_tf[1:3]))==1L,gg_cis_tf[4]!=gg_cis_tf[1])
+
 cat("CATER-MR direct-core evidence-safety tests passed\n")
