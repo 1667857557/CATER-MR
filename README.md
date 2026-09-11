@@ -4,27 +4,25 @@
 
 CATER-MR is a target-centric framework that augments conventional cis molecular/drug-target MR with biologically constrained trans-eQTL signals from **one-hop upstream TF loci** in a cell-type-specific GRN.
 
-## V0.5 design
+## Current design (v0.7.3)
 
-The implementation follows the current Occam-style design:
+CATER-MR keeps the analysis target-centric and deliberately separates biological gating, genetic QC, independent-signal selection, and MR estimation.
 
 ```text
-cell-type-specific GRN
-    -> target cis + direct parent-TF loci
-    -> one target-level Manc-COJO selection
-    -> independent cis + GRN-trans signals
-    -> allele-aligned IVW/GIVW
-    -> TF exact-IV mechanism annotation
-    -> complete same-IV one-hop sibling co-perturbation screen
-    -> local MVMR sensitivity analysis only when measured sibling co-perturbation is detected
-    -> BH-FDR across target genes
+cell-type-specific GRN + full-summary eQTL + ancestry-matched LD
+    -> default genetic QC
+    -> target-cis + direct parent-TF physical loci
+    -> SuSiE-RSS LD/summary consistency QC
+    -> Manc-COJO independent-signal selection
+    -> LD-aware cis / trans / combined MR
+    -> trans mechanism and pleiotropy sensitivity analyses
 ```
 
-The core principle is:
+The core principles are:
 
-> **SNPs are the instruments; the GRN is a biological gate; Manc-COJO is an independent-signal selector.**
+> **SNPs are the instruments; the GRN is a biological gate; SuSiE-RSS is a pre-COJO consistency QC; Manc-COJO is the independent-signal selector.**
 
-GRN edge weights never rescale eQTL effects.
+GRN edge weights do not rescale eQTL effects. Outcome associations are not used to select exposure instruments.
 
 ## Primary inputs
 
@@ -93,36 +91,40 @@ in the GRN.
 
 `ld_bfile` is a PLINK `bed/bim/fam` prefix. The preferred reference is the genotype sample used for the eQTL mapping; otherwise use a large ancestry-matched panel.
 
-## Manc-COJO
+### Genome build and default genetic QC
 
-CATER-MR uses **Manc-COJO** (`light156/multi-ancestry-COJO`) in single-cohort mode for the current one-summary-file-per-gene input contract.
+The current coordinate contract is **GRCh38/hg38**. CATER-MR does not perform liftOver internally.
 
-For each target `X`, CATER-MR performs **one** conditional-selection problem:
+By default:
 
-\[
-\mathcal R_X=L_X\cup\bigcup_{T\in P_1(X)}L_T
-\]
+- palindromic A/T and C/G SNPs are removed before locus construction (`drop_palindromic=TRUE`);
+- the extended MHC is excluded using hg38 `chr6:25,000,000-36,000,000` (`exclude_mhc=TRUE`);
+- targets whose TSS lies inside that interval are skipped;
+- parent TFs whose TSS lies inside that interval do not contribute trans loci.
 
-and runs:
+The same variant QC is propagated to sibling-cis selection used by the local MVMR sensitivity path.
 
-```text
-full X eQTL summary + --extract(candidate SNPs in R_X) + --cojo-slct
-```
+## Physical loci, LD consistency QC, and Manc-COJO
 
-The target cis and all direct parent-TF loci are therefore conditioned jointly. This avoids treating LD-correlated cis and nearby TF-locus signals as independent merely because they were analyzed in separate windows.
+For each target `X`, CATER-MR starts from the target cis window and the local windows of its direct parent TFs. Overlapping windows on the same chromosome are merged into connected physical components before SNP assignment.
 
-When multiple SNPs are selected, CATER-MR runs a second joint-only Manc-COJO call on those selected SNPs to obtain the compact `.ldr.cojo` signed LD matrix.
+If a connected component contains the target cis window, the entire component is classified as `cis`. Components containing only parent-TF windows remain local `trans` loci. This prevents one local LD neighborhood from being interpreted simultaneously as direct cis and TF-mediated trans evidence.
+
+Before COJO, each physical locus is checked against the configured PLINK LD reference with the SuSiE-RSS consistency diagnostic (`estimate_s_rss()` + `kriging_rss()`). Variants with LD/summary-statistic inconsistency, missing LD-reference support, non-finite LD rows, or irreconcilable allele coding are removed before conditional selection.
+
+CATER-MR then performs one target-level Manc-COJO selection across the retained candidate SNPs from the cis and GRN-constrained trans loci. When multiple signals are retained, the joint Manc-COJO step supplies the signed LD matrix used by the downstream LD-aware MR estimators.
+
+### Why COJO remains the IV selector
+
+The current framework needs **conditionally independent exposure-association signals** for MR. Manc-COJO directly serves that role. SuSiE is therefore used here as an LD/summary-consistency QC, not as a fine-mapping selector: CATER-MR does not use PIP or credible sets to define IVs.
+
+Fine-mapping can be added as a sensitivity or signal-interpretation layer, but it is not part of the default instrument-selection path.
 
 ## Allele orientation
 
-Manc-COJO LD is defined using the reference-panel allele coding. CATER-MR therefore:
+Palindromic SNPs are removed before the default locus/COJO path. For selected non-palindromic variants, CATER-MR orients the target eQTL effect to the Manc-COJO reference-panel A1/A2 coding, flips beta/EAF when required, and then harmonizes the outcome to the same allele orientation.
 
-1. orients the target eQTL beta to the Manc-COJO A1;
-2. flips beta/EAF when the QTL alleles are reversed;
-3. harmonizes the outcome to the same A1/A2 system;
-4. drops palindromic SNPs by default.
-
-This is required for mathematically valid use of signed LD.
+This preserves a consistent signed-LD convention for the MR layer.
 
 ## MR estimators
 
@@ -309,18 +311,14 @@ The network coefficient is reported as sensitivity output. `exposure_corr` is us
 
 ## Diagnostics
 
-For each target CATER-MR reports:
+For each target CATER-MR reports the main QC, selection, strength and sensitivity diagnostics, including:
 
-- number of COJO-selected cis/trans signals **before** outcome harmonization;
-- number of LD-allele-aligned signals and final MR-usable cis/trans IVs;
-- `min_F`, `mean_F`, `effective_F`;
-- trans information fraction;
-- TF-anchor evidence;
-- one-hop sibling pleiotropy results, requested/tested/missing actual-IV counts, and screen completeness;
-- cis/trans heterogeneity;
-- per-TF-locus incremental information;
-- leave-one-TF-locus-out effect change;
-- local-MVMR status, rank, weighted-design condition number, conditional F/convergence, IV-union coverage and residual maximum \(r^2\) where available.
+- numbers of hg38 MHC SNPs, palindromic SNPs and parent TFs excluded by the default genetic QC;
+- pre-COJO LD-diagnosis removals and SuSiE-RSS consistency summaries;
+- numbers of COJO-selected cis/trans signals and final MR-usable IVs;
+- `min_F`, `mean_F`, `effective_F`, and trans information fraction;
+- TF-anchor, sibling co-perturbation, cis/trans heterogeneity and leave-one-TF-locus diagnostics;
+- local-MVMR identification diagnostics when that sensitivity analysis is triggered.
 
 Outcome-based quantities are never used to select trans instruments or sibling exposures.
 
@@ -398,7 +396,10 @@ Statistical non-identifiability is not treated as a software error. Examples inc
 ```text
 NO_EQTL_FILE
 NO_TARGET_ANNOTATION
+TARGET_IN_MHC_EXCLUDED
 NO_CANDIDATE_SNP
+NO_CANDIDATE_AFTER_LD_DIAGNOSIS
+LD_DIAGNOSIS_FAILED
 NO_COJO_SIGNAL
 NO_LD_ALLELE_MATCH
 NO_HARMONIZED_IV
@@ -416,31 +417,17 @@ OK_NETWORK_ADJUSTED
 
 ## Design validation
 
-`tests/smoke.R` checks mathematical invariants and regression failure modes without requiring Manc-COJO itself, including:
-
-- one-hop region assignment;
-- Manc-COJO LD block parsing;
-- allele orientation;
-- GIVW reduction to ordinary IVW when \(R=I\);
-- \(F_{\mathrm{eff}}\) reduction to mean F when \(R=I\);
-- one-SNP sibling omnibus reduction to \(z^2\);
-- cis/trans heterogeneity under equal slopes;
-- trans-only information fraction equals 1 rather than `NA`;
-- covariance-weighted conditional F differs from unweighted OLS when standard errors differ;
-- conditional F uses signed LD and residual degrees of freedom `m-p+1`;
-- partial actual-IV sibling coverage is marked incomplete;
-- unresolved or incompletely screened trans sensitivity estimates never populate `primary_*`;
-- exact recovery of known coefficients in a deterministic local-MVMR example.
+The CI runs the core estimator smoke tests plus `tests/v06_hardening_smoke.R`. Together they cover the mathematical invariants and the current evidence-safety/QC contracts, including physical-locus merging, allele orientation, hg38 MHC exclusion, default palindromic removal, SuSiE-RSS diagnostic handling, non-finite LD handling, GIVW reductions, sibling-screen completeness, and local-MVMR safeguards.
 
 ## Scope deliberately not added
 
-V0.5 still does not make the following default components:
+The current implementation deliberately does not make the following default components:
 
 - two-hop/recursive network expansion;
 - parent-TF MVMR exposure;
 - MR-BMA;
 - whole-GRN joint MVMR;
-- fine-mapping/colocalization as a hard gate;
+- fine-mapping/PIP/credible-set selection or colocalization as a hard IV gate;
 - MR-link-2 as the primary estimator;
 - outcome-driven instrument selection.
 
