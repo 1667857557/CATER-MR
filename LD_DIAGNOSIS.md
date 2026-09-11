@@ -40,6 +40,6 @@ For target `GENE`, the full SNP-level diagnostic table is written to:
 
 The target summary also reports the number removed by each major reason and the maximum estimated SuSiE-RSS consistency parameter across diagnosed loci.
 
-Regression coverage includes unresolved palindromic variants, simultaneous removal of every non-finite LD row, strict logical validation of `enable_ld_diagnosis`, overlapping TF-only locus merging, and target-cis/TF component absorption.
+Regression coverage includes default pre-COJO palindromic removal, the inclusive GRCh38/hg38 extended-MHC boundaries at chr6:25-36 Mb, simultaneous removal of every non-finite LD row, strict logical validation of `enable_ld_diagnosis`, overlapping TF-only locus merging, and target-cis/TF component absorption.
 
 Reference implementation used for the diagnostic logic: xinhe-lab/mapgen, commit `393e66fe62442d2c499e4cab10a7f48309da216a`, `R/LD_diagnosis.R`.
