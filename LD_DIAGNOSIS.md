@@ -12,7 +12,7 @@ For each physical local cis/TF locus, CATER-MR:
 2. assigns candidate SNPs to these physical loci; `parent_tf` is retained only for SNPs in TF-only trans components, whereas SNPs absorbed into the cis component have no trans parent assignment;
 3. extracts candidate variants for that locus from the configured PLINK LD reference;
 4. computes a signed allele-count correlation matrix with PLINK 1.9 (`--r square`);
-5. aligns eQTL z-score signs to direct PLINK A1/A2 same/swap coding; strand-complement relationships are recorded for audit but excluded because the downstream CATER-MR COJO/MR allele contract also requires direct A1/A2 agreement;
+5. aligns eQTL z-score signs to direct PLINK A1/A2 same/swap coding for non-palindromic variants; strand-complement relationships are recorded for audit but excluded because the downstream CATER-MR COJO/MR allele contract also requires direct A1/A2 agreement;
 6. estimates the SuSiE-RSS consistency parameter with `susieR::estimate_s_rss()` and obtains conditional z-score diagnostics with `susieR::kriging_rss()`;
 7. removes variants satisfying `logLR > 2 & abs(z) > 2` before Manc-COJO runs.
 
