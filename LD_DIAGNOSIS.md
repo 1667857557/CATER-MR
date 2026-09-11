@@ -8,11 +8,13 @@ For each candidate cis/trans locus, CATER-MR:
 
 1. extracts candidate variants from the configured PLINK LD reference;
 2. computes a signed allele-count correlation matrix with PLINK 1.9 (`--r square`);
-3. aligns eQTL z-score signs to PLINK A1/A2 coding, including strand-complement matches;
+3. aligns eQTL z-score signs to direct PLINK A1/A2 same/swap coding; strand-complement relationships are recorded for audit but excluded because the downstream CATER-MR COJO/MR allele contract also requires direct A1/A2 agreement;
 4. estimates the SuSiE-RSS consistency parameter with `susieR::estimate_s_rss()` and obtains conditional z-score diagnostics with `susieR::kriging_rss()`;
 5. removes variants satisfying `logLR > 2 & abs(z) > 2` before Manc-COJO runs.
 
-Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the LD reference are also removed and explicitly reported. A one-variant locus cannot be conditionally diagnosed and is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
+Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the direct A1/A2 contract are also removed and explicitly reported. A one-variant locus cannot be conditionally diagnosed and is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
+
+The PLINK matrix is checked for dimensions, finite entries, symmetry, unit diagonal, and correlation range. CATER-MR deliberately does not impose an additional strict positive-semidefinite eigenvalue gate before SuSiE-RSS, because `susieR` performs the RSS eigenvalue handling itself and text-formatted PLINK matrices can contain small rounding artifacts.
 
 This is a QC gate only. It does not use SuSiE PIP or credible sets for instrument selection; Manc-COJO remains the instrument-selection method.
 
