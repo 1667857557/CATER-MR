@@ -90,9 +90,12 @@ d_occam <- .cater_primary_decision(fits_occam,has_trans=TRUE,sibling_screen_perf
 stopifnot(d_occam$model=="cis",d_occam$status=="OK_CIS_ANCHOR_PRIMARY")
 stopifnot("primary_policy" %in% names(formals(cater_mr)))
 
-# 12. Backward compatibility: new options must not shift established trailing positional arguments.
+# 12. Backward compatibility: appending new options must not shift established positional arguments.
 formal_names <- names(formals(cater_mr))
-stopifnot(identical(tail(formal_names, 4L), c("outdir","drop_palindromic","verbose","primary_policy")))
+legacy_tail <- c("outdir","drop_palindromic","verbose","primary_policy")
+i_outdir <- match("outdir",formal_names)
+stopifnot(identical(formal_names[i_outdir:(i_outdir+3L)],legacy_tail))
+stopifnot(all(match(c("plink_bin","enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z"),formal_names) > match("primary_policy",formal_names)))
 
 # 13. screened_cater promotes a valid combined fit, but a failed augmented fit must fall back to cis.
 fits_combined_fail <- list(cis=mkfit("OK",b=.11,se=.04,p=.01),
@@ -104,5 +107,23 @@ d_combined_fail <- .cater_primary_decision(
 stopifnot(d_combined_fail$model=="cis",
           d_combined_fail$status=="CATER_COMBINED_FAILED_CIS_FALLBACK",
           d_combined_fail$evidence_status=="COMBINED_FIT_FAILED")
+
+
+
+# 14. Pre-COJO z/LD alignment handles direct swaps and strand complements.
+qz <- data.frame(snp=paste0("rs",1:5),a1=c("A","A","A","A","A"),a2=c("G","G","C","C","C"),
+                 beta=rep(.2,5),se=rep(.1,5),stringsAsFactors=FALSE)
+rz <- data.frame(snp=paste0("rs",1:5),ld_a1=c("A","G","T","G","A"),ld_a2=c("G","A","G","T","G"),stringsAsFactors=FALSE)
+az <- .cater_align_z_to_plink(qz,rz)
+stopifnot(identical(az$alignment,c("same","swap","strand_same","strand_swap","mismatch")))
+stopifnot(isTRUE(all.equal(az$z[1:4],c(2,-2,2,-2),tolerance=1e-12)),is.na(az$z[5]),!az$allele_match[5])
+
+# 15. mapgen/SuSiE-RSS detection rule is strict: logLR > 2 and |z| > 2.
+cd <- data.frame(z=c(2.1,2,5,-3),logLR=c(2.1,3,1,2.2))
+stopifnot(identical(.cater_ld_outlier_index(cd,2,2),c(1L,4L)))
+
+# 16. The public API exposes LD diagnosis controls while retaining legacy argument positions.
+stopifnot(all(c("plink_bin","enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z") %in% names(formals(cater_mr))))
+stopifnot(identical(formals(cater_mr)$enable_ld_diagnosis,TRUE))
 
 cat("CATER-MR direct-core evidence-safety tests passed\n")
