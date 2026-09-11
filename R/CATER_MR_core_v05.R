@@ -925,7 +925,7 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2) {
   primary_policy<-match.arg(primary_policy)
   if(length(plink_bin)!=1L||is.na(plink_bin)||!nzchar(as.character(plink_bin))) .cater_stop("plink_bin must be a non-empty scalar")
-  if(length(enable_ld_diagnosis)!=1L||is.na(enable_ld_diagnosis)) .cater_stop("enable_ld_diagnosis must be TRUE or FALSE")
+  if(!is.logical(enable_ld_diagnosis)||length(enable_ld_diagnosis)!=1L||is.na(enable_ld_diagnosis)) .cater_stop("enable_ld_diagnosis must be TRUE or FALSE")
   if(length(ld_diag_loglr)!=1L||!is.finite(ld_diag_loglr)||ld_diag_loglr<0) .cater_stop("ld_diag_loglr must be a finite non-negative scalar")
   if(length(ld_diag_abs_z)!=1L||!is.finite(ld_diag_abs_z)||ld_diag_abs_z<0) .cater_stop("ld_diag_abs_z must be a finite non-negative scalar")
   if(!dir.exists(eqtl_dir)) .cater_stop("eqtl_dir does not exist: %s",eqtl_dir)

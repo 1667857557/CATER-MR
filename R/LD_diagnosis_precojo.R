@@ -17,18 +17,21 @@
   ra1 <- toupper(ref$ld_a1); ra2 <- toupper(ref$ld_a2)
   same <- qa1==ra1 & qa2==ra2
   swap <- qa1==ra2 & qa2==ra1
+  palindromic <- paste0(qa1,qa2) %in% c("AT","TA","CG","GC")
   ca1 <- .cater_complement_allele(qa1); ca2 <- .cater_complement_allele(qa2)
   comp_same <- !same & !swap & ca1==ra1 & ca2==ra2
   comp_swap <- !same & !swap & ca1==ra2 & ca2==ra1
-  # Keep the same direct A1/A2 contract as the downstream COJO/MR alignment.
-  # Strand complements are recorded for audit, but are not inferred as matches.
-  sign <- ifelse(same, 1, ifelse(swap, -1, NA_real_))
-  alignment <- ifelse(same, "same", ifelse(swap, "swap",
-    ifelse(comp_same, "strand_same", ifelse(comp_swap, "strand_swap", "mismatch"))))
+  # A/T and C/G variants cannot be strand-resolved from allele labels alone.
+  # Do not infer their sign for SuSiE-RSS without a frequency-based contract.
+  direct_match <- (same|swap) & !palindromic
+  sign <- ifelse(palindromic, NA_real_, ifelse(same, 1, ifelse(swap, -1, NA_real_)))
+  alignment <- ifelse(palindromic, "palindromic_unresolved",
+    ifelse(same, "same", ifelse(swap, "swap",
+      ifelse(comp_same, "strand_same", ifelse(comp_swap, "strand_swap", "mismatch")))))
   z0 <- d$beta/d$se
   data.frame(snp=d$snp,qtl_a1=qa1,qtl_a2=qa2,ld_a1=ra1,ld_a2=ra2,
-             z_raw=z0,z=z0*sign,alignment=alignment,allele_match=same|swap,
-             stringsAsFactors=FALSE)
+             z_raw=z0,z=z0*sign,alignment=alignment,allele_match=direct_match,
+             palindromic=palindromic,stringsAsFactors=FALSE)
 }
 
 .cater_ld_outlier_index <- function(conditional_dist, loglr_cutoff=2, abs_z_cutoff=2) {
@@ -73,6 +76,16 @@
   out
 }
 
+.cater_filter_nonfinite_ld_rows <- function(R) {
+  R <- as.matrix(R)
+  if (!nrow(R)) return(list(R=R,nonfinite=character()))
+  bad <- which(rowSums(!is.finite(R)) > 0L)
+  if (!length(bad)) return(list(R=R,nonfinite=character()))
+  ids <- rownames(R)[bad]
+  keep <- setdiff(seq_len(nrow(R)),bad)
+  list(R=R[keep,keep,drop=FALSE],nonfinite=ids)
+}
+
 .cater_read_plink_square_ld <- function(path, snps) {
   if (!length(snps)) return(matrix(numeric(),0,0))
   if (length(snps)==1L) return(matrix(1,1,1,dimnames=list(snps,snps)))
@@ -113,14 +126,9 @@
     if (!identical(st2,0L)) .cater_stop("PLINK signed LD calculation failed for LD diagnosis: %s",prefix)
     R <- .cater_read_plink_square_ld(paste0(ldp,".ld"),ref_all$snp)
   }
-  nonfinite <- character()
-  while (nrow(R) && any(!is.finite(R))) {
-    bad_diag <- which(!is.finite(diag(R)))
-    bad <- if (length(bad_diag)) bad_diag[1L] else which.max(rowSums(!is.finite(R)))
-    nonfinite <- c(nonfinite,rownames(R)[bad])
-    keep <- setdiff(seq_len(nrow(R)),bad)
-    R <- R[keep,keep,drop=FALSE]
-  }
+  finite_filter <- .cater_filter_nonfinite_ld_rows(R)
+  R <- finite_filter$R
+  nonfinite <- finite_filter$nonfinite
   ref <- ref_all[match(rownames(R),ref_all$snp),,drop=FALSE]
   if (nrow(R)) R <- .cater_validate_diag_ld(R,"pre-COJO PLINK signed LD")
   list(R=R,ref=ref,ref_all=ref_all,missing=missing,nonfinite=unique(nonfinite))
@@ -174,7 +182,12 @@
       al <- .cater_align_z_to_plink(qq,pl$ref)
       jj <- match(al$snp,rows$snp)
       rows$z[jj] <- al$z; rows$alignment[jj] <- al$alignment
-      badal <- jj[!al$allele_match]
+      pal <- jj[al$palindromic]
+      if (length(pal)) {
+        rows$status[pal] <- "NOT_DIAGNOSABLE_PALINDROMIC"
+        rows$remove[pal] <- FALSE
+      }
+      badal <- jj[!al$allele_match & !al$palindromic]
       if (length(badal)) { rows$status[badal] <- "LD_ALLELE_MISMATCH"; rows$remove[badal] <- TRUE }
       good <- al$snp[al$allele_match]
       if (length(good)) {

@@ -162,4 +162,36 @@ stopifnot(identical(cm_cis_tf$source,c("cis","cis","cis","trans")),
 gg_cis_tf <- .cater_ld_diagnosis_groups(q_cis_tf,cm_cis_tf)
 stopifnot(length(unique(gg_cis_tf[1:3]))==1L,gg_cis_tf[4]!=gg_cis_tf[1])
 
+# 20. Palindromic A/T and C/G variants are never signed from allele labels alone.
+qp <- data.frame(snp=c("p1","p2","n1"),a1=c("A","C","A"),a2=c("T","G","G"),
+                 beta=c(.2,.2,.2),se=c(.1,.1,.1),stringsAsFactors=FALSE)
+rp <- data.frame(snp=c("p1","p2","n1"),ld_a1=c("T","C","G"),ld_a2=c("A","G","A"),
+                 stringsAsFactors=FALSE)
+ap <- .cater_align_z_to_plink(qp,rp)
+stopifnot(identical(ap$palindromic,c(TRUE,TRUE,FALSE)),
+          identical(ap$alignment,c("palindromic_unresolved","palindromic_unresolved","swap")),
+          all(is.na(ap$z[1:2])),isTRUE(all.equal(ap$z[3],-2,tolerance=1e-12)),
+          identical(ap$allele_match,c(FALSE,FALSE,TRUE)))
+
+# 21. Every variant whose original LD row contains a non-finite entry is removed together.
+Rnf <- matrix(c(1,NaN,0.2,NaN,1,0.3,0.2,0.3,1),3,3,byrow=TRUE,
+              dimnames=list(c("a","b","c"),c("a","b","c")))
+fnf <- .cater_filter_nonfinite_ld_rows(Rnf)
+stopifnot(identical(sort(fnf$nonfinite),c("a","b")),
+          identical(dim(fnf$R),c(1L,1L)),rownames(fnf$R)=="c")
+Rnf2 <- matrix(c(1,NaN,NaN,1),2,2,byrow=TRUE,
+               dimnames=list(c("x","y"),c("x","y")))
+fnf2 <- .cater_filter_nonfinite_ld_rows(Rnf2)
+stopifnot(setequal(fnf2$nonfinite,c("x","y")),nrow(fnf2$R)==0L)
+
+# 22. The diagnosis switch must be a scalar logical; numeric/string truthy values fail closed.
+for (bad_flag in list(1,"TRUE")) {
+  err <- tryCatch({
+    cater_mr(grn=data.frame(TF="A",Target="B"),eqtl_dir=tempdir(),outcome=data.frame(),
+             ld_bfile="unused",enable_ld_diagnosis=bad_flag)
+    NULL
+  },error=function(e)e)
+  stopifnot(inherits(err,"error"),grepl("enable_ld_diagnosis must be TRUE or FALSE",conditionMessage(err),fixed=TRUE))
+}
+
 cat("CATER-MR direct-core evidence-safety tests passed\n")
