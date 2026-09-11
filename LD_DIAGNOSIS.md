@@ -40,6 +40,6 @@ For target `GENE`, the full SNP-level diagnostic table is written to:
 
 The target summary also reports the number removed by each major reason and the maximum estimated SuSiE-RSS consistency parameter across diagnosed loci.
 
-The Codex review hardening is covered by smoke tests for unresolved palindromic variants, simultaneous removal of every non-finite LD row, strict logical validation of `enable_ld_diagnosis`, and physical merging of overlapping TF windows.
+Regression coverage includes unresolved palindromic variants, simultaneous removal of every non-finite LD row, strict logical validation of `enable_ld_diagnosis`, overlapping TF-only locus merging, and target-cis/TF component absorption.
 
 Reference implementation used for the diagnostic logic: xinhe-lab/mapgen, commit `393e66fe62442d2c499e4cab10a7f48309da216a`, `R/LD_diagnosis.R`.
