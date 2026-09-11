@@ -16,7 +16,7 @@ For each physical candidate cis/TF locus, CATER-MR:
 6. estimates the SuSiE-RSS consistency parameter with `susieR::estimate_s_rss()` and obtains conditional z-score diagnostics with `susieR::kriging_rss()`;
 7. removes variants satisfying `logLR > 2 & abs(z) > 2` before Manc-COJO runs.
 
-`locus_id` is therefore the physical cis/TF locus used for LD diagnosis. `parent_tf` remains the biological attribution field. This prevents overlapping TF windows from being treated as artificial independent loci without erasing which TF window(s) each SNP actually occupies.
+`locus_id` is the physical cis/TF locus used for LD diagnosis and is also propagated with the retained instruments. `parent_tf` remains the biological attribution field. Thus overlapping TF windows are one locus for LD/COJO bookkeeping without erasing whether an individual SNP lies in A, B, or both windows.
 
 Variants absent from the LD reference, variants with non-finite LD rows, and variants whose allele pair cannot be reconciled with the direct A1/A2 contract are also removed and explicitly reported. A one-variant locus cannot be conditionally diagnosed and is retained with status `NOT_DIAGNOSABLE_SINGLETON`.
 
