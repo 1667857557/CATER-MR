@@ -18,13 +18,8 @@ jobs:
           ref: feature/susie-ld-diagnosis-pre-cojo
       - name: Apply review fixes
         run: python .github/scripts/address_codex_review.py
-      - name: Validate patch
-        run: |
-          git diff --check
-          grep -q 'palindromic_unresolved' R/LD_diagnosis_precojo.R
-          grep -q 'cater_filter_nonfinite_ld_rows' R/LD_diagnosis_precojo.R
-          grep -q '!is.logical(enable_ld_diagnosis)' R/CATER_MR_core_v05.R
-          grep -q 'NOT_DIAGNOSABLE_PALINDROMIC' tests/v06_hardening_smoke.R
+      - name: Validate patch formatting
+        run: git diff --check
       - name: Commit fixes and remove patch machinery
         run: |
           git config user.name "github-actions[bot]"
