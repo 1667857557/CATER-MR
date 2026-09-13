@@ -2,6 +2,16 @@ source("SCMORE_GRN.R")
 needed <- c("Seurat", "Signac", "GenomicRanges", "GenomeInfoDb")
 stopifnot(all(vapply(needed, requireNamespace, logical(1), quietly=TRUE)))
 
+# Sequence-name aliases must fail instead of being converted into empty levels.
+alias_error <- tryCatch(
+  .cater_scmore_reject_seqname_aliases(c("chr1", "GL000195.1"), c("1", "chrM")),
+  error=function(e)e
+)
+stopifnot(inherits(alias_error,"error"))
+stopifnot(grepl("conflicting aliases",conditionMessage(alias_error),fixed=TRUE))
+stopifnot(grepl("chr1/1",conditionMessage(alias_error),fixed=TRUE))
+stopifnot(isTRUE(.cater_scmore_reject_seqname_aliases(c("chr1", "GL000195.1"), c("chr1", "chrM"))))
+
 # Both operands have an exclusive sequence level. No private data needed.
 peaks <- GenomicRanges::GRanges(c("chr1", "GL000195.1"), IRanges::IRanges(c(10,30),c(20,40)))
 anno <- GenomicRanges::GRanges(c("chr1", "chrM"), IRanges::IRanges(c(12,50),c(15,60)), strand="+")
