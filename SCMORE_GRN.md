@@ -91,7 +91,7 @@ remotes::install_github(
 
 ## Upstream calculation preserved
 
-For each cell-type subset, CATER-MR calls `scMORE::createRegulon()` with its audited public defaults:
+For each cell-type subset, CATER-MR calls `scMORE::createRegulon()` with its audited public calculation defaults except for the candidate regulatory-region prior:
 
 ```r
 n_targets = 5
@@ -102,7 +102,15 @@ tss_downstream = 0
 exclude_exon_regions = TRUE
 ```
 
-If `conserved_regions` is omitted, CATER-MR deliberately does not pass the argument, allowing scMORE itself to evaluate its `phastConsElements20Mammals.UCSC.hg38` default.
+By default, CATER-MR loads `phastConsElements20Mammals.UCSC.hg38` and `SCREEN.ccRE.UCSC.hg38` from Pando, combines them with `GenomicRanges::union()`, and passes that `GRanges` object as `conserved_regions`. Consequently, the downstream `Pando::initiate_grn(regions=...)` call uses the conserved-plus-SCREEN union rather than scMORE's upstream phastCons-only default.
+
+To reproduce the audited scMORE upstream region behavior instead, explicitly set:
+
+```r
+conserved_regions = NULL
+```
+
+CATER-MR then omits the `conserved_regions` argument when calling `scMORE::createRegulon()`, allowing scMORE itself to evaluate its `phastConsElements20Mammals.UCSC.hg38` default.
 
 The upstream sequence remains:
 

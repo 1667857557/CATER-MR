@@ -53,6 +53,16 @@
   attr(x,"source")<-src;x
 }
 
+.cater_scmore_default_regions <- function() {
+  if(!requireNamespace("Pando",quietly=TRUE)) .cater_scmore_stop("Pando is required to load the default hg38 regulatory regions")
+  if(!requireNamespace("GenomicRanges",quietly=TRUE)) .cater_scmore_stop("GenomicRanges is required to combine the default hg38 regulatory regions")
+  e<-new.env(parent=baseenv())
+  suppressWarnings(utils::data(list=c("phastConsElements20Mammals.UCSC.hg38","SCREEN.ccRE.UCSC.hg38"),package="Pando",envir=e))
+  miss<-setdiff(c("phastConsElements20Mammals.UCSC.hg38","SCREEN.ccRE.UCSC.hg38"),ls(e,all.names=TRUE))
+  if(length(miss)) .cater_scmore_stop("Pando is missing required hg38 region dataset(s): %s",paste(miss,collapse=", "))
+  GenomicRanges::union(e$phastConsElements20Mammals.UCSC.hg38,e$SCREEN.ccRE.UCSC.hg38)
+}
+
 .cater_scmore_create_args <- function(n_targets=5,peak2gene_method="Signac",infer_method="glm",tss_upstream=100000,tss_downstream=0,exclude_exon_regions=TRUE,conserved_regions=NULL) {
   x<-list(n_targets=n_targets,peak2gene_method=peak2gene_method,infer_method=infer_method,tss_upstream=tss_upstream,tss_downstream=tss_downstream,exclude_exon_regions=exclude_exon_regions)
   if(!is.null(conserved_regions))x$conserved_regions<-conserved_regions;x
@@ -116,7 +126,7 @@
 .cater_scmore_output_names <- function(cell_types){base<-vapply(cell_types,.cater_scmore_safe_name,character(1));rank<-match(cell_types,sort(unique(cell_types)));paste0(base,"__",sprintf("%03d",rank))}
 .cater_scmore_clean_message <- function(x){if(!length(x)||is.na(x))return(NA_character_);trimws(gsub("[\r\n\t]+"," ",as.character(x)))}
 
-cater_build_scmore_grn <- function(single_cell,celltype_col=NULL,cell_types=NULL,gene_annotation=NULL,n_targets=5,peak2gene_method="Signac",infer_method="glm",tss_upstream=100000,tss_downstream=0,exclude_exon_regions=TRUE,conserved_regions=NULL,drop_self_loops=TRUE,missing_coordinate=c("error","drop"),strict_upstream=TRUE,on_error=c("stop","record"),outdir=NULL,gc_after_each=TRUE,verbose=TRUE) {
+cater_build_scmore_grn <- function(single_cell,celltype_col=NULL,cell_types=NULL,gene_annotation=NULL,n_targets=5,peak2gene_method="Signac",infer_method="glm",tss_upstream=100000,tss_downstream=0,exclude_exon_regions=TRUE,conserved_regions=.cater_scmore_default_regions(),drop_self_loops=TRUE,missing_coordinate=c("error","drop"),strict_upstream=TRUE,on_error=c("stop","record"),outdir=NULL,gc_after_each=TRUE,verbose=TRUE) {
   on_error<-match.arg(on_error);missing_coordinate<-match.arg(missing_coordinate);prov<-.cater_scmore_provenance(strict_upstream);.cater_scmore_validate_seurat(single_cell)
   if(is.null(gene_annotation)){gene_annotation<-.cater_scmore_annotation_from_object(single_cell);annsrc<-"Signac::GetTSSPositions(longest transcript)"}else{gene_annotation<-.cater_scmore_standardize_gene_annotation(gene_annotation);annsrc<-"user gene-level TSS annotation"}
   labels<-.cater_scmore_cell_labels(single_cell,celltype_col);src<-attr(labels,"source");available<-unique(unname(labels));if(is.null(cell_types))cell_types<-available else{cell_types<-unique(as.character(cell_types));bad<-setdiff(cell_types,available);if(length(bad)).cater_scmore_stop("Requested cell types absent: %s",paste(bad,collapse=", "))}
