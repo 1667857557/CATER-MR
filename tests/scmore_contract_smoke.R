@@ -66,4 +66,30 @@ stopifnot(length(unique(nm)) == 2L)
 msg <- .cater_scmore_clean_message("first\tsecond\nthird")
 stopifnot(!grepl("[\t\r\n]", msg))
 
+# CATER-MR must explicitly override scMORE's phastCons-only upstream default so that
+# Pando::initiate_grn() receives the genomic union of conserved and SCREEN hg38 regions.
+default_expr <- paste(deparse(formals(cater_build_scmore_grn)$conserved_regions), collapse="")
+stopifnot(identical(default_expr, ".cater_scmore_default_regions()"))
+region_loader <- paste(deparse(body(.cater_scmore_default_regions)), collapse=" ")
+stopifnot(grepl("GenomicRanges::union", region_loader, fixed=TRUE))
+stopifnot(!"conserved_regions" %in% names(.cater_scmore_create_args(conserved_regions=NULL)))
+
+if(requireNamespace("Pando",quietly=TRUE) && requireNamespace("GenomicRanges",quietly=TRUE)) {
+  default_regions <- .cater_scmore_default_regions()
+  e <- new.env(parent=baseenv())
+  suppressWarnings(utils::data(
+    list=c("phastConsElements20Mammals.UCSC.hg38","SCREEN.ccRE.UCSC.hg38"),
+    package="Pando", envir=e
+  ))
+  expected_regions <- GenomicRanges::union(
+    e$phastConsElements20Mammals.UCSC.hg38,
+    e$SCREEN.ccRE.UCSC.hg38
+  )
+  stopifnot(inherits(default_regions, "GRanges"))
+  stopifnot(identical(default_regions, expected_regions))
+} else {
+  default_regions_err <- try(.cater_scmore_default_regions(), silent=TRUE)
+  stopifnot(inherits(default_regions_err, "try-error"))
+}
+
 cat("scMORE -> CATER-MR GRN contract smoke tests passed\n")
