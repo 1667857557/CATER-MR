@@ -1,10 +1,10 @@
-# scMORE → CATER-MR cell-type GRN construction
+# scMORE 鈫?CATER-MR cell-type GRN construction
 
 CATER-MR can construct its required **cell-type-specific, direct one-hop GRN input** from a processed single-cell multiome Seurat object while delegating the actual regulatory-network inference to the audited upstream `scMORE::createRegulon()` implementation.
 
 ## CATER-MR GRN contract
 
-The MR estimator does not need a TF–peak–gene row table as its graph. For each cell type it needs a direct topology
+The MR estimator does not need a TF鈥損eak鈥揼ene row table as its graph. For each cell type it needs a direct topology
 
 ```text
 TF  Target
@@ -50,7 +50,7 @@ processed multiome Seurat
 
 The raw scMORE output is never overwritten. It is retained in `scmore_outputs` and `edge_evidence`. The CATER-facing graph is stored separately in `grns`.
 
-This separation is important: collapsing repeated TF–Target rows is a graph-contract transformation, not a new statistical aggregation. CATER-MR does **not** invent a combined P value, correlation, or edge weight across scMORE peak/evidence rows.
+This separation is important: collapsing repeated TF鈥揟arget rows is a graph-contract transformation, not a new statistical aggregation. CATER-MR does **not** invent a combined P value, correlation, or edge weight across scMORE peak/evidence rows.
 
 ## Why per-cell-type refitting is used
 
@@ -244,6 +244,29 @@ cater_get_scmore_grn(fit, "Microglia", evidence=TRUE)   # raw edge evidence tabl
 cater_get_scmore_grn(fit, "Microglia", raw=TRUE)        # full createRegulon output
 ```
 
+## Sequence-level compatibility before scMORE
+
+Before calling `createRegulon`, the adapter adds any peak chromosome names
+missing from the ChromatinAssay annotation as **empty sequence levels** on
+the local object. Existing intervals, feature names, expression values, and
+known annotation genome/length/circularity metadata are preserved. This is
+not contig renaming, liftover, or a claim that an unannotated contig has genes.
+
+This handles Pando's exon-subtraction path with GenomicRanges 1.64.0:
+`initiate_grn` rebuilds peaks from feature names and calls `subtract`, which
+reaches `psetdiff` / `compatibleSeqnames`. If peaks have a level absent from
+the annotation and the annotation also has a level absent from peaks, this
+can throw `Level set of 'x' must be subset of that of 'y', or vice versa`.
+Extending annotation levels makes the sets comparable without removing
+peaks or disabling exon exclusion. Explicit non-hg38 annotation still fails
+the existing validation; ambiguous gene/TSS mappings are still rejected.
+
+Run `Rscript tests/scmore_seqlevels_regression.R` with Seurat, Signac,
+GenomicRanges, and GenomeInfoDb installed. The test also runs actual Pando
+region initialization when Pando is installed. It checks exact subtraction
+coordinates, input preservation, and the object passed to `createRegulon`.
+It does not validate motif scanning, GRN fits, COJO, or outcome-dependent MR.
+
 ## Output files
 
 For each cell type, filenames include a deterministic unique suffix so labels that sanitize to the same text cannot overwrite each other.
@@ -276,3 +299,4 @@ Then the estimator constructs:
 queries the target's own full-summary eQTL in these regions, and performs one target-level Manc-COJO selection. The scMORE peak regions are biological evidence for how the direct edge was inferred; they are **not** substituted for the TF genomic locus used by CATER-MR.
 
 That distinction is the reason the adapter outputs both raw scMORE evidence and a separate direct, coordinate-complete CATER graph.
+

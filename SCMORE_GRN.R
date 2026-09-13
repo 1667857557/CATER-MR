@@ -68,8 +68,26 @@
   if(!is.null(conserved_regions))x$conserved_regions<-conserved_regions;x
 }
 
+.cater_scmore_prepare_seqlevels <- function(single_cell) {
+  # Pando rebuilds peak GRanges from feature names. Its exon subtraction can
+  # fail in GenomicRanges::psetdiff when peak and annotation level sets are
+  # incomparable. Add empty annotation levels; never drop/rename ranges or
+  # replace known genome, length, or circularity metadata.
+  anno <- Signac::Annotation(single_cell[["peaks"]])
+  peaks <- Signac::StringToGRanges(rownames(single_cell[["peaks"]]))
+  missing <- setdiff(GenomeInfoDb::seqlevels(peaks),GenomeInfoDb::seqlevels(anno))
+  if(length(missing)) {
+    GenomeInfoDb::seqlevels(anno) <- c(GenomeInfoDb::seqlevels(anno),missing)
+    Signac::Annotation(single_cell[["peaks"]]) <- anno
+  }
+  single_cell
+}
+
 .cater_scmore_call_create_regulon <- function(single_cell,args,create_fun=NULL) {
-  if(is.null(create_fun))create_fun<-getExportedValue("scMORE","createRegulon");do.call(create_fun,c(list(single_cell=single_cell),args))
+  if(is.null(create_fun))create_fun<-getExportedValue("scMORE","createRegulon")
+  # Mock callbacks can also inspect the exact object delivered to upstream.
+  if(inherits(single_cell,"Seurat"))single_cell<-.cater_scmore_prepare_seqlevels(single_cell)
+  do.call(create_fun,c(list(single_cell=single_cell),args))
 }
 
 .cater_scmore_validate_output <- function(x,cell_type) {
@@ -150,3 +168,4 @@ cater_build_scmore_grn <- function(single_cell,celltype_col=NULL,cell_types=NULL
 cater_get_scmore_grn <- function(x,cell_type=NULL,raw=FALSE,evidence=FALSE){if(!inherits(x,"cater_scmore_grn")).cater_scmore_stop("x must be a cater_scmore_grn object");if(raw&&evidence).cater_scmore_stop("Choose only one of raw/evidence");ok<-names(x$grns)[!vapply(x$grns,is.null,logical(1))];if(is.null(cell_type)){if(length(ok)!=1L).cater_scmore_stop("Specify cell_type; available: %s",paste(ok,collapse=", "));cell_type<-ok[[1L]]};if(!cell_type%in%names(x$grns)||is.null(x$grns[[cell_type]])).cater_scmore_stop("No successful GRN for '%s'",cell_type);if(raw)return(x$scmore_outputs[[cell_type]]);if(evidence)return(x$edge_evidence[[cell_type]]);x$grns[[cell_type]]}
 
 print.cater_scmore_grn <- function(x,...){cat("CATER-MR scMORE cell-type GRNs\n  mode:",x$mode,"\n  completed:",sum(x$summary$status%in%c("OK","EMPTY_GRN"),na.rm=TRUE),"/",nrow(x$summary),"\n  edges:",sum(x$summary$n_cater_edges,na.rm=TRUE),"\n");invisible(x)}
+
