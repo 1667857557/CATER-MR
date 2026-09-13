@@ -244,6 +244,29 @@ cater_get_scmore_grn(fit, "Microglia", evidence=TRUE)   # raw edge evidence tabl
 cater_get_scmore_grn(fit, "Microglia", raw=TRUE)        # full createRegulon output
 ```
 
+## Sequence-level compatibility before scMORE
+
+Before calling `createRegulon`, the adapter adds any peak chromosome names
+missing from the ChromatinAssay annotation as **empty sequence levels** on
+the local object. Existing intervals, feature names, expression values, and
+known annotation genome/length/circularity metadata are preserved. This is
+not contig renaming, liftover, or a claim that an unannotated contig has genes.
+
+This handles Pando's exon-subtraction path with GenomicRanges 1.64.0:
+`initiate_grn` rebuilds peaks from feature names and calls `subtract`, which
+reaches `psetdiff` / `compatibleSeqnames`. If peaks have a level absent from
+the annotation and the annotation also has a level absent from peaks, this
+can throw `Level set of 'x' must be subset of that of 'y', or vice versa`.
+Extending annotation levels makes the sets comparable without removing
+peaks or disabling exon exclusion. Explicit non-hg38 annotation still fails
+the existing validation; ambiguous gene/TSS mappings are still rejected.
+
+Run `Rscript tests/scmore_seqlevels_regression.R` with Seurat, Signac,
+GenomicRanges, and GenomeInfoDb installed. The test also runs actual Pando
+region initialization when Pando is installed. It checks exact subtraction
+coordinates, input preservation, and the object passed to `createRegulon`.
+It does not validate motif scanning, GRN fits, COJO, or outcome-dependent MR.
+
 ## Output files
 
 For each cell type, filenames include a deterministic unique suffix so labels that sanitize to the same text cannot overwrite each other.
