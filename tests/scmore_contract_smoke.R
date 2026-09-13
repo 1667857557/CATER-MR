@@ -66,4 +66,13 @@ stopifnot(length(unique(nm)) == 2L)
 msg <- .cater_scmore_clean_message("first\tsecond\nthird")
 stopifnot(!grepl("[\t\r\n]", msg))
 
+# CATER-MR must explicitly override scMORE's phastCons-only upstream default so that
+# Pando::initiate_grn() receives the union of conserved and SCREEN hg38 regions.
+default_expr <- paste(deparse(formals(cater_build_scmore_grn)$conserved_regions), collapse="")
+stopifnot(identical(default_expr, ".cater_scmore_default_regions()"))
+region_loader <- paste(deparse(body(.cater_scmore_default_regions)), collapse=" ")
+stopifnot(grepl("phastConsElements20Mammals.UCSC.hg38", region_loader, fixed=TRUE))
+stopifnot(grepl("SCREEN.ccRE.UCSC.hg38", region_loader, fixed=TRUE))
+stopifnot(grepl("union", region_loader, fixed=TRUE))
+
 cat("scMORE -> CATER-MR GRN contract smoke tests passed\n")
