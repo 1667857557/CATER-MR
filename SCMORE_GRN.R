@@ -55,11 +55,12 @@
 
 .cater_scmore_default_regions <- function() {
   if(!requireNamespace("Pando",quietly=TRUE)) .cater_scmore_stop("Pando is required to load the default hg38 regulatory regions")
+  if(!requireNamespace("GenomicRanges",quietly=TRUE)) .cater_scmore_stop("GenomicRanges is required to combine the default hg38 regulatory regions")
   e<-new.env(parent=baseenv())
   suppressWarnings(utils::data(list=c("phastConsElements20Mammals.UCSC.hg38","SCREEN.ccRE.UCSC.hg38"),package="Pando",envir=e))
   miss<-setdiff(c("phastConsElements20Mammals.UCSC.hg38","SCREEN.ccRE.UCSC.hg38"),ls(e,all.names=TRUE))
   if(length(miss)) .cater_scmore_stop("Pando is missing required hg38 region dataset(s): %s",paste(miss,collapse=", "))
-  union(e$phastConsElements20Mammals.UCSC.hg38,e$SCREEN.ccRE.UCSC.hg38)
+  GenomicRanges::union(e$phastConsElements20Mammals.UCSC.hg38,e$SCREEN.ccRE.UCSC.hg38)
 }
 
 .cater_scmore_create_args <- function(n_targets=5,peak2gene_method="Signac",infer_method="glm",tss_upstream=100000,tss_downstream=0,exclude_exon_regions=TRUE,conserved_regions=NULL) {
