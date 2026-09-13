@@ -68,16 +68,35 @@
   if(!is.null(conserved_regions))x$conserved_regions<-conserved_regions;x
 }
 
+.cater_scmore_seqname_key <- function(x) {
+  y<-toupper(as.character(x));y<-sub("^CHR","",y);y[y%in%c("M","MT")]<-"MT";y
+}
+
+.cater_scmore_reject_seqname_aliases <- function(peak_levels,annotation_levels) {
+  pk<-.cater_scmore_seqname_key(peak_levels);ak<-.cater_scmore_seqname_key(annotation_levels);pairs<-character()
+  for(i in seq_along(peak_levels)){
+    j<-which(ak==pk[[i]] & annotation_levels!=peak_levels[[i]])
+    if(length(j))pairs<-c(pairs,paste0(peak_levels[[i]],"/",annotation_levels[j]))
+  }
+  pairs<-unique(pairs)
+  if(length(pairs)) .cater_scmore_stop("Peak and annotation seqlevels use conflicting aliases for the same chromosome (e.g. %s). Normalize both to one naming convention before scMORE; refusing to add empty annotation levels.",paste(utils::head(pairs,10L),collapse=", "))
+  invisible(TRUE)
+}
+
 .cater_scmore_prepare_seqlevels <- function(single_cell) {
   # Pando rebuilds peak GRanges from feature names. Its exon subtraction can
   # fail in GenomicRanges::psetdiff when peak and annotation level sets are
-  # incomparable. Add empty annotation levels; never drop/rename ranges or
+  # incomparable. Reject chromosome aliases first, then add only genuinely
+  # absent peak contigs as empty annotation levels. Never drop/rename ranges or
   # replace known genome, length, or circularity metadata.
   anno <- Signac::Annotation(single_cell[["peaks"]])
   peaks <- Signac::StringToGRanges(rownames(single_cell[["peaks"]]))
-  missing <- setdiff(GenomeInfoDb::seqlevels(peaks),GenomeInfoDb::seqlevels(anno))
+  peak_levels <- GenomeInfoDb::seqlevels(peaks)
+  annotation_levels <- GenomeInfoDb::seqlevels(anno)
+  .cater_scmore_reject_seqname_aliases(peak_levels,annotation_levels)
+  missing <- setdiff(peak_levels,annotation_levels)
   if(length(missing)) {
-    GenomeInfoDb::seqlevels(anno) <- c(GenomeInfoDb::seqlevels(anno),missing)
+    GenomeInfoDb::seqlevels(anno) <- c(annotation_levels,missing)
     Signac::Annotation(single_cell[["peaks"]]) <- anno
   }
   single_cell
