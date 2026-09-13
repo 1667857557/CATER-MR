@@ -48,4 +48,3 @@ if(requireNamespace("Pando",quietly=TRUE)) {
   cat("Real Pando::initiate_grn integration passed\n")
 }
 cat("scMORE seqlevels regression passed\n")
-

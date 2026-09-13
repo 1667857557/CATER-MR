@@ -1,10 +1,10 @@
-# scMORE 鈫?CATER-MR cell-type GRN construction
+# scMORE → CATER-MR cell-type GRN construction
 
 CATER-MR can construct its required **cell-type-specific, direct one-hop GRN input** from a processed single-cell multiome Seurat object while delegating the actual regulatory-network inference to the audited upstream `scMORE::createRegulon()` implementation.
 
 ## CATER-MR GRN contract
 
-The MR estimator does not need a TF鈥損eak鈥揼ene row table as its graph. For each cell type it needs a direct topology
+The MR estimator does not need a TF–peak–gene row table as its graph. For each cell type it needs a direct topology
 
 ```text
 TF  Target
@@ -50,7 +50,7 @@ processed multiome Seurat
 
 The raw scMORE output is never overwritten. It is retained in `scmore_outputs` and `edge_evidence`. The CATER-facing graph is stored separately in `grns`.
 
-This separation is important: collapsing repeated TF鈥揟arget rows is a graph-contract transformation, not a new statistical aggregation. CATER-MR does **not** invent a combined P value, correlation, or edge weight across scMORE peak/evidence rows.
+This separation is important: collapsing repeated TF–Target rows is a graph-contract transformation, not a new statistical aggregation. CATER-MR does **not** invent a combined P value, correlation, or edge weight across scMORE peak/evidence rows.
 
 ## Why per-cell-type refitting is used
 
@@ -299,4 +299,3 @@ Then the estimator constructs:
 queries the target's own full-summary eQTL in these regions, and performs one target-level Manc-COJO selection. The scMORE peak regions are biological evidence for how the direct edge was inferred; they are **not** substituted for the TF genomic locus used by CATER-MR.
 
 That distinction is the reason the adapter outputs both raw scMORE evidence and a separate direct, coordinate-complete CATER graph.
-
