@@ -290,7 +290,9 @@
 
 .cater_read_jma_ref <- function(path) {
   if (!file.exists(path)) return(data.frame())
-  x <- utils::read.table(path, header=TRUE, stringsAsFactors=FALSE, check.names=FALSE)
+  # Preserve nucleotide T: automatic type conversion turns an all-T column into TRUE.
+  x <- utils::read.table(path, header=TRUE, stringsAsFactors=FALSE, check.names=FALSE,
+                         colClasses="character")
   if (!nrow(x)) return(data.frame())
   snp <- .cater_pick_col(x,"SNP",label="Manc-COJO SNP")
   a1 <- .cater_pick_col(x,"A1",label="Manc-COJO A1")
