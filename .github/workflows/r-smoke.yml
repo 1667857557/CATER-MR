@@ -20,6 +20,8 @@ jobs:
         run: Rscript tests/smoke.R
       - name: Run v0.6 hardening tests
         run: Rscript tests/v06_hardening_smoke.R
+      - name: Run v0.8 significant-trans architecture tests
+        run: Rscript tests/v08_significant_trans_smoke.R
       - name: Run combined eQTL input tests
         run: Rscript tests/eqtl_table_input_smoke.R
       - name: Run scMORE-to-CATER GRN contract tests
