@@ -74,11 +74,13 @@ q_qc <- data.frame(snp=c("mhc","pal","ok"),chr=c("6","1","1"),pos=c(30000000,100
 q_keep <- .cater_filter_analysis_variants(q_qc,drop_palindromic=TRUE,exclude_mhc=TRUE)
 stopifnot(identical(q_keep$snp,"ok"))
 
-# Obsolete COJO/LD-diagnosis API is absent.
+# Current LD helper is loaded; obsolete COJO/SuSiE-RSS API is absent.
 fml <- names(formals(cater_mr))
 stopifnot("ld_threads" %in% fml)
+stopifnot(exists(".cater_plink_ld",mode="function"),exists(".cater_read_plink_bim",mode="function"))
 stopifnot(!any(c("manc_cojo_bin","cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads",
                  "enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z") %in% fml))
 stopifnot(!exists(".cater_read_manc_ldr",mode="function"))
+stopifnot(!exists(".cater_susie_ld_diagnosis",mode="function"))
 
 cat("CATER-MR core hardening tests passed\n")
