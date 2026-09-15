@@ -1,0 +1,37 @@
+name: Apply legacy thread compatibility
+
+on:
+  push:
+    branches: [codex/redesign-significant-trans-mr]
+    paths:
+      - tools/apply_thread_compat.py
+      - .github/workflows/apply-thread-compat.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/redesign-significant-trans-mr
+      - name: Apply patch
+        run: python tools/apply_thread_compat.py
+      - name: Verify patch surface
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('R/CATER_MR_core.R').read_text()
+          assert 'mapped_cojo_threads<-!missing(cojo_threads)&&missing(ld_threads)' in s
+          assert 'ld_threads<-cojo_threads' in s
+          assert 'Deprecated cojo_threads is mapped to ld_threads for compatibility' in s
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add R/CATER_MR_core.R tests/positional_compat_smoke.R
+          git commit -m "fix: map legacy cojo_threads to ld_threads"
+          git push origin HEAD:codex/redesign-significant-trans-mr
