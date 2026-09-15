@@ -2,27 +2,32 @@
 
 ## Upstream
 
-Audited implementation:
-
 ```text
 repository: mayunlong89/scMORE
 version: 2.0.0
 commit: f614736b9f49631471b0f18dfa415ee35e4d7b66
 ```
 
-## Input
+## Functions
 
-`cater_build_scmore_grn()` requires a processed Seurat object with:
+| Function | Description |
+|---|---|
+| `cater_build_scmore_grn()` | Refits `scMORE::createRegulon()` per cell type and returns CATER-ready direct TF-target graphs |
+| `cater_get_scmore_grn()` | Extracts one CATER-ready GRN, raw scMORE output, or edge-evidence table |
+| `print.cater_scmore_grn()` | Prints GRN-build metadata |
+
+## Input schema
 
 ```text
+Seurat object
 RNA assay
 peaks ChromatinAssay
-gene annotation on peaks
-cell-type labels from Idents() or celltype_col
+peak gene annotation
+cell-type labels
 hg38 / GRCh38 coordinates
 ```
 
-Optional `gene_annotation` columns:
+Optional gene annotation:
 
 ```text
 symbol
@@ -30,17 +35,7 @@ chr
 tss
 ```
 
-## Functions
-
-| Function | Description |
-|---|---|
-| `cater_build_scmore_grn()` | Refits `scMORE::createRegulon()` per requested cell type and returns CATER-ready direct TF-target graphs |
-| `cater_get_scmore_grn()` | Extracts one CATER-ready GRN, raw scMORE output, or edge-evidence table |
-| `print.cater_scmore_grn()` | Prints build summary |
-
-## Output
-
-CATER-ready GRN columns:
+## Output schema
 
 ```text
 TF
@@ -52,7 +47,7 @@ Target_tss
 cell_type
 ```
 
-`cater_scmore_grn` components:
+Object components:
 
 ```text
 grns
@@ -65,22 +60,6 @@ celltype_source
 gene_annotation_source
 createRegulon_args
 mode
-```
-
-## Minimal run
-
-```r
-source("SCMORE_GRN.R")
-
-x <- cater_build_scmore_grn(
-  single_cell = obj,
-  celltype_col = "cell_type",
-  cell_types = c("B", "T"),
-  strict_upstream = TRUE,
-  outdir = "scmore_grn"
-)
-
-grn_B <- cater_get_scmore_grn(x, "B")
 ```
 
 ## References
