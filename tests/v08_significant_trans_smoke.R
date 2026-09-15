@@ -71,3 +71,28 @@ i <- match("outdir",fml); stopifnot(identical(fml[i:(i+3L)],legacy_tail))
 
 unlink(td,recursive=TRUE,force=TRUE)
 cat("CATER-MR v0.8 significant-trans architecture smoke tests passed\n")
+
+
+# Codex review regression tests (PR #13)
+# Significant-only manifests must never silently fall back to legacy full-summary trans.
+m_sig <- list(trans_data_mode="significant_only")
+stopifnot(inherits(try(.cater_resolve_trans_contract(m_sig,NULL,5e-8,5e-8),silent=TRUE),"try-error"))
+stopifnot(identical(.cater_resolve_trans_contract(m_sig,data.frame(),5e-8,5e-8),"significant_only"))
+
+# A source reporting threshold stricter than the requested instrument threshold is not identifiable.
+stopifnot(inherits(try(.cater_resolve_trans_contract(m_sig,data.frame(),5e-8,1e-10),silent=TRUE),"try-error"))
+
+# Network primary requires explicit policy + conditional-F acceptance + both public gates.
+mk_review_fit <- function(status="OK",b=.2,se=.05,p=.01) data.frame(n_iv=2L,beta=b,se=se,p=p,Q=NA,Q_p=NA,information=10,joint_wald_per_df=5,effective_F=5,precision_information=10,mean_F=20,min_F=15,status=status)
+fits_review <- list(cis=mk_review_fit(),trans=mk_review_fit(),combined=mk_review_fit())
+net_review <- list(status="OK",primary_eligible=TRUE,beta=c(X=.3),se=c(X=.06),p=c(X=.001))
+d_blocked <- .cater_primary_decision(fits_review,net_review,"X",TRUE,TRUE,TRUE,1L,"screened_cater",allow_network_primary=FALSE,sibling_screen_independent=TRUE,sibling_screen_testable=TRUE)
+d_allowed <- .cater_primary_decision(fits_review,net_review,"X",TRUE,TRUE,TRUE,1L,"screened_cater",allow_network_primary=TRUE,sibling_screen_independent=TRUE,sibling_screen_testable=TRUE)
+stopifnot(d_blocked$model=="cis",d_allowed$model=="network")
+
+# The MVMR builder creates a per-target directory before calling LD selection.
+b_mvmr <- paste(deparse(body(.cater_build_mvmr)),collapse="\n")
+stopifnot(grepl("dir.create\\(mvmr_dir",b_mvmr),grepl("file.path\\(mvmr_dir, \"ld\"\\)",b_mvmr))
+
+# Candidate frames are normalized to a common summary-stat schema before rbind.
+stopifnot(grepl("d <- d\\[, core, drop = FALSE\\]",gsub(";", "; ", b_mvmr),fixed=FALSE) || grepl("d<-d\\[,core,drop=FALSE\\]",b_mvmr))
