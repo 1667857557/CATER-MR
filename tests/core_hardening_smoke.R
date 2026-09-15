@@ -74,12 +74,17 @@ q_qc <- data.frame(snp=c("mhc","pal","ok"),chr=c("6","1","1"),pos=c(30000000,100
 q_keep <- .cater_filter_analysis_variants(q_qc,drop_palindromic=TRUE,exclude_mhc=TRUE)
 stopifnot(identical(q_keep$snp,"ok"))
 
-# Current LD helper is loaded; obsolete COJO/SuSiE-RSS API is absent.
+# Current LD helper is loaded; obsolete implementations are absent, while
+# deprecated formal slots preserve the pre-cleanup positional ABI.
 fml <- names(formals(cater_mr))
+legacy_prefix <- c("grn","eqtl_dir","outcome","gene_annotation","ld_bfile",
+                   "manc_cojo_bin","targets","cell_type","trait","cis_window","tf_window",
+                   "cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads","qtl_n")
+stopifnot(identical(fml[seq_along(legacy_prefix)],legacy_prefix))
+plink_i <- match("plink_bin",fml)
+stopifnot(identical(fml[(plink_i+1L):(plink_i+3L)],c("enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z")))
 stopifnot("ld_threads" %in% fml)
 stopifnot(exists(".cater_plink_ld",mode="function"),exists(".cater_read_plink_bim",mode="function"))
-stopifnot(!any(c("manc_cojo_bin","cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads",
-                 "enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z") %in% fml))
 stopifnot(!exists(".cater_read_manc_ldr",mode="function"))
 stopifnot(!exists(".cater_susie_ld_diagnosis",mode="function"))
 

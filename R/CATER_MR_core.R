@@ -2,7 +2,7 @@
 # Cis And Trans eQTLs guided by Regulatory networks for drug-target MR
 # Significant-IV + GRN-gating + LD-aware MR.
 
-.CATER_VERSION <- "0.8.1"
+.CATER_VERSION <- "0.8.2"
 
 .cater_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))
@@ -282,17 +282,29 @@
 }
 
 cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
-                     targets=NULL,cell_type=NA_character_,trait=NA_character_,
-                     cis_window=1e6,tf_window=cis_window,qtl_n=NULL,
+                     manc_cojo_bin="manc_cojo",targets=NULL,cell_type=NA_character_,trait=NA_character_,
+                     cis_window=1e6,tf_window=cis_window,cojo_p=5e-8,cojo_wind_kb=10000L,
+                     cojo_collinear=0.9,cojo_threads=1L,qtl_n=NULL,
                      sibling_fdr=0.05,enable_sibling_screen=TRUE,enable_mvmr=TRUE,
                      exposure_corr=NULL,min_cond_F=10,mvmr_max_r2=NULL,mvmr_max_condition=1e4,
                      outdir="CATER_MR_results",drop_palindromic=TRUE,verbose=TRUE,
                      primary_policy=c("cis_anchor","screened_cater"),plink_bin="plink",
+                     enable_ld_diagnosis=TRUE,ld_diag_loglr=2,ld_diag_abs_z=2,
                      exclude_mhc=TRUE,trans_eqtl=NULL,trans_gene_col=NULL,instrument_p=5e-8,
                      trans_reporting_p=5e-8,ld_clump_r2=.01,ld_clump_kb=10000L,ld_threads=1L,
                      cross_effect_lookup=NULL,accept_experimental_conditional_f=FALSE,
                      allow_network_primary=FALSE,sibling_screen_independent=FALSE,
                      input_manifest=NULL,strict_input_contract=FALSE) {
+  legacy_args<-c(
+    if(!missing(manc_cojo_bin)) "manc_cojo_bin",
+    if(!missing(cojo_p)) "cojo_p",
+    if(!missing(cojo_wind_kb)) "cojo_wind_kb",
+    if(!missing(cojo_collinear)) "cojo_collinear",
+    if(!missing(cojo_threads)) "cojo_threads",
+    if(!missing(enable_ld_diagnosis)) "enable_ld_diagnosis",
+    if(!missing(ld_diag_loglr)) "ld_diag_loglr",
+    if(!missing(ld_diag_abs_z)) "ld_diag_abs_z")
+  if(length(legacy_args)) warning(sprintf("Deprecated compatibility argument(s) ignored by CATER-MR v0.8: %s",paste(legacy_args,collapse=", ")),call.=FALSE)
   primary_policy<-match.arg(primary_policy)
   if(!dir.exists(eqtl_dir)).cater_stop("eqtl_dir does not exist: %s",eqtl_dir)
   if(length(instrument_p)!=1L||!is.finite(instrument_p)||instrument_p<=0||instrument_p>=1).cater_stop("instrument_p must be in (0,1)")
