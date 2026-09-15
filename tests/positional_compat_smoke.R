@@ -20,5 +20,8 @@ stopifnot(identical(as.integer(mc$cojo_wind_kb),10000L))
 stopifnot(identical(as.numeric(mc$cojo_collinear),0.9))
 stopifnot(identical(as.integer(mc$cojo_threads),4L))
 stopifnot(identical(as.numeric(mc$qtl_n),500))
+core_txt <- paste(readLines("R/CATER_MR_core.R",warn=FALSE),collapse="\n")
+stopifnot(grepl("ld_threads<-cojo_threads",core_txt,fixed=TRUE))
+stopifnot(grepl("missing(ld_threads)",core_txt,fixed=TRUE))
 
 cat("CATER-MR positional compatibility tests passed\n")

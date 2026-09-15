@@ -295,12 +295,17 @@ cater_mr <- function(grn,eqtl_dir,outcome,gene_annotation=NULL,ld_bfile,
                      cross_effect_lookup=NULL,accept_experimental_conditional_f=FALSE,
                      allow_network_primary=FALSE,sibling_screen_independent=FALSE,
                      input_manifest=NULL,strict_input_contract=FALSE) {
+  mapped_cojo_threads<-!missing(cojo_threads)&&missing(ld_threads)
+  if(mapped_cojo_threads){
+    ld_threads<-cojo_threads
+    warning("Deprecated cojo_threads is mapped to ld_threads for compatibility",call.=FALSE)
+  }
   legacy_args<-c(
     if(!missing(manc_cojo_bin)) "manc_cojo_bin",
     if(!missing(cojo_p)) "cojo_p",
     if(!missing(cojo_wind_kb)) "cojo_wind_kb",
     if(!missing(cojo_collinear)) "cojo_collinear",
-    if(!missing(cojo_threads)) "cojo_threads",
+    if(!missing(cojo_threads)&&!mapped_cojo_threads) "cojo_threads",
     if(!missing(enable_ld_diagnosis)) "enable_ld_diagnosis",
     if(!missing(ld_diag_loglr)) "ld_diag_loglr",
     if(!missing(ld_diag_abs_z)) "ld_diag_abs_z")
