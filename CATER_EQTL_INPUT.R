@@ -1,9 +1,5 @@
-# CATER-MR combined eQTL input adapter v0.6
-#
-# Storage contract only: merged_table[GENE == X, ] == Q_X.
-# The adapter never performs significance filtering and never changes MR/COJO
-# mathematics. It can materialize only GRN-relevant genes to avoid needless disk
-# amplification, while direct calls still default to all genes for compatibility.
+# CATER-MR full-summary eQTL table adapter
+# Materializes merged full-summary gene associations into <GENE>.txt.gz caches.
 
 .cater_eqtl_input_stop <- function(...) stop(sprintf(...), call. = FALSE)
 .cater_eqtl_input_msg <- function(verbose, ...) if (isTRUE(verbose)) message(sprintf(...))

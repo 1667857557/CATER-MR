@@ -68,6 +68,9 @@ stopifnot(all(c("trans_eqtl","instrument_p","trans_reporting_p","ld_clump_r2",
                 "cross_effect_lookup","accept_experimental_conditional_f") %in% fml))
 legacy_tail <- c("outdir","drop_palindromic","verbose","primary_policy")
 i <- match("outdir",fml); stopifnot(identical(fml[i:(i+3L)],legacy_tail))
+stopifnot("ld_threads" %in% fml)
+stopifnot(!any(c("manc_cojo_bin","cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads",
+                 "enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z") %in% fml))
 
 unlink(td,recursive=TRUE,force=TRUE)
 cat("CATER-MR v0.8 significant-trans architecture smoke tests passed\n")
