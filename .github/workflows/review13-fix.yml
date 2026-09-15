@@ -1,0 +1,31 @@
+name: PR13 Codex review fixes
+
+on:
+  push:
+    branches: [codex/redesign-significant-trans-mr]
+    paths:
+      - tools/review13_fix.py
+      - .github/workflows/review13-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/redesign-significant-trans-mr
+      - name: Patch original core and regression tests
+        run: python tools/review13_fix.py
+      - name: Parse patched R core
+        run: Rscript -e 'parse("R/CATER_MR_core_v05.R"); parse("tests/v08_significant_trans_smoke.R")'
+      - name: Commit direct fixes
+        run: |
+          if git diff --quiet -- R/CATER_MR_core_v05.R tests/v08_significant_trans_smoke.R; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add R/CATER_MR_core_v05.R tests/v08_significant_trans_smoke.R
+          git commit -m "fix: address PR13 Codex review"
+          git push origin HEAD:codex/redesign-significant-trans-mr
