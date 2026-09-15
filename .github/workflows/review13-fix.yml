@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: codex/redesign-significant-trans-mr
+      - uses: r-lib/actions/setup-r@v2
       - name: Patch original core and regression tests
         run: python tools/review13_fix.py
       - name: Parse patched R core
