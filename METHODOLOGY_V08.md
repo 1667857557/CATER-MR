@@ -23,6 +23,8 @@ The GRN is a biological eligibility gate. GRN edge weights do **not** rescale eQ
 
 `trans_eqtl` may be either a data frame or a tab-delimited file containing reported trans SNP-gene pairs, with a gene column plus standard SNP summary-statistic fields.
 
+When the manifest declares `trans_data_mode="significant_only"`, an explicit `trans_eqtl` input is required. CATER-MR fails closed rather than silently falling back to legacy full-summary trans extraction from `eqtl_dir`.
+
 The default analysis threshold is:
 
 ```text
@@ -31,7 +33,13 @@ instrument_p = 5e-8
 
 This is a common **instrument-eligibility threshold**, not a claim that cis and trans discovery scans have identical family-wise multiple-testing properties.
 
-`trans_reporting_p` describes the source-study availability threshold. If it is more stringent than `instrument_p`, the trans instrument pool is necessarily availability-censored and CATER-MR warns explicitly.
+`trans_reporting_p` describes the source-study availability threshold. For significant-only input, the requested eligibility threshold must satisfy:
+
+```text
+instrument_p <= trans_reporting_p
+```
+
+If `trans_reporting_p < instrument_p`, eligible trans associations between the two thresholds are unobserved by construction, so CATER-MR stops rather than analyzing an incomplete instrument pool. If `trans_reporting_p > instrument_p`, CATER-MR simply applies the more stringent `instrument_p` selection to the available catalog.
 
 `CATER_EQTL_INPUT.R` remains a legacy full-summary storage adapter. It must not be used to make a significance-censored trans catalog appear to be a full gene-level summary table.
 
@@ -113,7 +121,16 @@ The correlated-IV GLS MVMR point estimator is retained. The current custom corre
 EXPERIMENTAL_CORRELATED_IV_CONDITIONAL_F
 ```
 
-and cannot make MVMR primary unless the user explicitly opts in with `accept_experimental_conditional_f=TRUE`. It should be validated against a mature correlated-instrument conditional-strength implementation before being interpreted using conventional conditional-F cutoffs.
+Network MVMR cannot become the primary result by default. Promotion requires all of the following explicit gates in addition to the numerical eligibility checks:
+
+```text
+primary_policy = "screened_cater"
+accept_experimental_conditional_f = TRUE
+allow_network_primary = TRUE
+sibling_screen_independent = TRUE
+```
+
+The last flag is an explicit user assertion that the sibling-screen evidence used to trigger adjustment is suitable for primary-model selection rather than merely exploratory reuse of the same ascertainment process. These gates remain `FALSE` by default. The custom conditional-strength implementation should be externally benchmarked before conventional conditional-F cutoffs are given strong interpretation.
 
 ## Primary-result policy
 
