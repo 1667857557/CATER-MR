@@ -61,13 +61,23 @@ SE <- matrix(.02,nrow(B),ncol(B),dimnames=dimnames(B)); C <- diag(2); dimnames(C
 cf <- .cater_conditional_f(B,SE,diag(nrow(B)),c("X","Z"),C)
 stopifnot(identical(attr(cf,"method"),"EXPERIMENTAL_CORRELATED_IV_CONDITIONAL_F"))
 
-# Public API exposes the new data contract while preserving the established
-# positional argument block through primary_policy.
+# Public API exposes the v0.8 data contract while preserving the historical
+# positional slots. The old implementations remain removed; these formals exist
+# only to prevent silent positional rebinding in pre-v0.8 calls.
 fml <- names(formals(cater_mr))
 stopifnot(all(c("trans_eqtl","instrument_p","trans_reporting_p","ld_clump_r2",
                 "cross_effect_lookup","accept_experimental_conditional_f") %in% fml))
+legacy_prefix <- c("grn","eqtl_dir","outcome","gene_annotation","ld_bfile",
+                   "manc_cojo_bin","targets","cell_type","trait","cis_window","tf_window",
+                   "cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads","qtl_n")
+stopifnot(identical(fml[seq_along(legacy_prefix)],legacy_prefix))
 legacy_tail <- c("outdir","drop_palindromic","verbose","primary_policy")
 i <- match("outdir",fml); stopifnot(identical(fml[i:(i+3L)],legacy_tail))
+plink_i <- match("plink_bin",fml)
+stopifnot(identical(fml[(plink_i+1L):(plink_i+3L)],c("enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z")))
+stopifnot("ld_threads" %in% fml)
+stopifnot(!exists(".cater_read_manc_ldr",mode="function"))
+stopifnot(!exists(".cater_susie_ld_diagnosis",mode="function"))
 
 unlink(td,recursive=TRUE,force=TRUE)
 cat("CATER-MR v0.8 significant-trans architecture smoke tests passed\n")

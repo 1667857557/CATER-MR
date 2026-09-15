@@ -23,14 +23,6 @@ q <- data.frame(snp=c("c","t1","t2"),chr=c("1","1","2"),pos=c(1000,5000,10000),
 cm <- .cater_candidate_map(q,regions)
 stopifnot(identical(cm$source,c("cis","trans","trans")))
 
-# Manc-COJO chromosome-block LD parser.
-f <- tempfile(fileext=".ldr.cojo")
-writeLines(c("# Chromosome 1","SNP\trs1\trs2","rs1\t1\t0.25","rs2\t0.25\t1",
-             "# Chromosome 2","SNP\trs3","rs3\t1"),f)
-ld <- .cater_read_manc_ldr(f,c("rs1","rs2","rs3"))
-stopifnot(abs(ld["rs1","rs2"]-.25)<1e-12,ld["rs1","rs3"]==0)
-unlink(f)
-
 # Allele-to-LD orientation flips beta and EAF when required.
 d <- data.frame(snp=c("a","b"),chr="1",pos=1:2,a1=c("A","G"),a2=c("G","A"),
                 beta=c(.2,.3),se=.02,p=1e-10,eaf=c(.2,.3),n=500)
@@ -158,4 +150,4 @@ stopifnot(identical(mock2$seen$conserved_regions,custom_regions))
 .cater_scmore_validate_output(mock2,"MockCell")
 stopifnot(identical(.cater_scmore_safe_name("CD8+ T / effector"),"CD8_T_effector"))
 
-cat("CATER-MR v0.5 core-estimator + scMORE adapter regression tests passed\n")
+cat("CATER-MR core-estimator + scMORE adapter regression tests passed\n")
