@@ -28,6 +28,10 @@ jobs:
           Rscript tests/v08_significant_trans_smoke.R
       - name: Commit cleanup
         run: |
+          # The cleanup script also validates the future r-smoke workflow, but
+          # GitHub Actions tokens cannot push workflow-file edits. Restore that
+          # one file before committing; it is updated separately via GitHub API.
+          git restore .github/workflows/r-smoke.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
