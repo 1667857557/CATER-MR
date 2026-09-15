@@ -85,9 +85,25 @@ if old not in t:
     raise SystemExit("core hardening legacy block not found")
 p.write_text(t.replace(old,new,1))
 
-# Documentation/API cleanup: compatibility formals are allowed; implementations/files remain absent.
+# Documentation/API cleanup: compatibility formals are allowed; obsolete behavior remains absent.
 p = Path("tests/documentation_cleanup_smoke.R")
 t = p.read_text()
+old_scan = '''for (f in c("README.md","EQTL_INPUT.md","SCMORE_GRN.md","CATER_MR.R","R/CATER_MR_core.R","R/LD_helpers.R")) {
+  x <- paste(readLines(f,warn=FALSE),collapse="\\n")
+  stopifnot(!grepl("pre-COJO|Manc-COJO|enable_ld_diagnosis|CATER_MR_core_v05|LD_diagnosis_precojo",x,ignore.case=TRUE))
+}
+'''
+new_scan = '''for (f in c("README.md","EQTL_INPUT.md","SCMORE_GRN.md","CATER_MR.R","R/LD_helpers.R")) {
+  x <- paste(readLines(f,warn=FALSE),collapse="\\n")
+  stopifnot(!grepl("pre-COJO|Manc-COJO|enable_ld_diagnosis|CATER_MR_core_v05|LD_diagnosis_precojo",x,ignore.case=TRUE))
+}
+core_txt <- paste(readLines("R/CATER_MR_core.R",warn=FALSE),collapse="\\n")
+stopifnot(!grepl("pre-COJO|Manc-COJO|CATER_MR_core_v05|LD_diagnosis_precojo|\\.cater_susie_ld_diagnosis|\\.cater_read_manc_ldr",
+                 core_txt,ignore.case=TRUE))
+'''
+if old_scan not in t:
+    raise SystemExit("documentation cleanup scan block not found")
+t = t.replace(old_scan,new_scan,1)
 old = '''fml <- names(formals(cater_mr))
 stopifnot("ld_threads" %in% fml)
 stopifnot(!any(c("manc_cojo_bin","cojo_p","cojo_wind_kb","cojo_collinear","cojo_threads",
