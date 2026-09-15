@@ -1,10 +1,14 @@
 # eQTL input
 
-## Cis eQTL
+## Functions
 
-`eqtl_dir/<GENE>.txt.gz` contains the complete tested cis summary for one gene.
+| Function | Description |
+|---|---|
+| `cater_prepare_eqtl_table()` | Materializes merged full cis-eQTL summaries to per-gene files |
+| `cater_mr_from_table()` | Materializes required genes and calls `cater_mr()` |
+| `print.cater_eqtl_cache()` | Prints eQTL-cache metadata |
 
-Accepted columns:
+## Cis summary schema
 
 | Field | Accepted names |
 |---|---|
@@ -15,19 +19,25 @@ Accepted columns:
 | other allele | `A2`, `NEA`, `other_allele`, `non_effect_allele`, `REF` |
 | effect | `b`, `beta`, `BETA`, `effect`, `estimate` |
 | standard error | `se`, `SE`, `stderr`, `standard_error` |
-| P value | `p`, `P`, `pval`, `p_value`, `pvalue`; optional |
-| effect-allele frequency | `freq`, `EAF`, `eaf`, `effect_allele_frequency`, `AF`; optional |
-| sample size | `N`, `n`, `samplesize`, `sample_size`; optional when `qtl_n` is supplied |
+| P value | `p`, `P`, `pval`, `p_value`, `pvalue` |
+| effect-allele frequency | `freq`, `EAF`, `eaf`, `effect_allele_frequency`, `AF` |
+| sample size | `N`, `n`, `samplesize`, `sample_size` |
 
-## Significant-only trans eQTL
+Per-gene files:
 
-`trans_eqtl` is a data frame or tab-delimited file with one gene column plus the summary-statistic fields above.
+```text
+eqtl_dir/<GENE>.txt.gz
+```
 
-Accepted gene names:
+## Significant-only trans schema
+
+Gene column:
 
 ```text
 GENE, gene, gene_name, gene_symbol, symbol, SYMBOL
 ```
+
+Association fields use the cis-summary aliases above.
 
 Contract:
 
@@ -37,45 +47,18 @@ trans_eqtl != NULL
 instrument_p <= trans_reporting_p
 ```
 
-## Outcome
+## Outcome schema
 
-`outcome` uses the same SNP, allele, effect, standard-error and optional P/EAF/N aliases. Chromosome and position are optional.
-
-## Full-summary table adapter
-
-```r
-source("CATER_MR.R")
-source("CATER_EQTL_INPUT.R")
-
-cache <- cater_prepare_eqtl_table(
-  eqtl_table = "full_cis_eqtl.tsv.gz",
-  gene_col = "GENE",
-  outdir = "eqtl/cis"
-)
+```text
+SNP + effect allele + other allele + effect + standard error
 ```
 
-`cater_prepare_eqtl_table()` materializes `<GENE>.txt.gz` files and does not perform significance filtering.
+Optional:
 
-## Direct run from a merged full-summary table
-
-```r
-fit <- cater_mr_from_table(
-  grn = grn,
-  eqtl_table = "full_cis_eqtl.tsv.gz",
-  outcome = outcome,
-  gene_col = "GENE",
-  trans_eqtl = trans_hits,
-  gene_annotation = annotation,
-  ld_bfile = "ld/EUR_GRCh38",
-  instrument_p = 5e-8,
-  trans_reporting_p = 5e-8
-)
+```text
+P value
+EAF
+N
+chromosome
+position
 ```
-
-## Functions
-
-| Function | Description |
-|---|---|
-| `cater_prepare_eqtl_table()` | Materializes a merged full-summary table to per-gene files |
-| `cater_mr_from_table()` | Materializes required genes and calls `cater_mr()` |
-| `print.cater_eqtl_cache()` | Prints cache metadata |
