@@ -24,16 +24,22 @@ jobs:
           Rscript -e "parse(file='CATER_MR.R')"
           Rscript -e "parse(file='R/CATER_MR_core.R')"
           Rscript -e "parse(file='R/LD_helpers.R')"
-      - name: Run smoke tests
-        run: |
-          Rscript tests/smoke.R
-          Rscript tests/core_hardening_smoke.R
-          Rscript tests/v08_significant_trans_smoke.R
-          Rscript tests/v09_lean_trans_smoke.R
-          Rscript tests/eqtl_table_input_smoke.R
-          Rscript tests/scmore_contract_smoke.R
-          Rscript tests/documentation_cleanup_smoke.R
-          Rscript tests/positional_compat_smoke.R
+      - name: Core estimator smoke
+        run: Rscript tests/smoke.R
+      - name: Core hardening smoke
+        run: Rscript tests/core_hardening_smoke.R
+      - name: v0.8 compatibility smoke
+        run: Rscript tests/v08_significant_trans_smoke.R
+      - name: v0.9 direct-core smoke
+        run: Rscript tests/v09_lean_trans_smoke.R
+      - name: Combined eQTL input smoke
+        run: Rscript tests/eqtl_table_input_smoke.R
+      - name: scMORE contract smoke
+        run: Rscript tests/scmore_contract_smoke.R
+      - name: Documentation/API smoke
+        run: Rscript tests/documentation_cleanup_smoke.R
+      - name: Positional compatibility smoke
+        run: Rscript tests/positional_compat_smoke.R
       - name: Commit direct implementation
         run: |
           rm -f scripts/direct_core_refactor.py .github/workflows/direct-core-refactor.yml
