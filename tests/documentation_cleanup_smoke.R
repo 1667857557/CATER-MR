@@ -1,7 +1,7 @@
 source("CATER_MR.R")
 
 required <- c("README.md","EQTL_INPUT.md","SCMORE_GRN.md","MATHEMATICS.md",
-              "R/CATER_MR_core.R","R/LD_helpers.R")
+              "R/CATER_MR_core.R","R/CATER_MR_lean.R","R/LD_helpers.R")
 stopifnot(all(file.exists(required)))
 
 obsolete_files <- c("METHODOLOGY_V08.md","LD_DIAGNOSIS.md",
@@ -25,6 +25,10 @@ stopifnot(identical(fml[seq_along(legacy_prefix)],legacy_prefix))
 plink_i <- match("plink_bin",fml)
 stopifnot(identical(fml[(plink_i+1L):(plink_i+3L)],c("enable_ld_diagnosis","ld_diag_loglr","ld_diag_abs_z")))
 stopifnot("ld_threads" %in% fml)
+stopifnot(all(c("tf_anchor_p","max_reported_trans_targets","trans_set") %in% fml))
+stopifnot(identical(formals(cater_mr)$enable_sibling_screen,FALSE))
+stopifnot(identical(formals(cater_mr)$enable_mvmr,FALSE))
+stopifnot(exists(".cater_qualify_trans_candidates",mode="function"))
 stopifnot(exists(".cater_plink_ld",mode="function"))
 stopifnot(!exists(".cater_read_manc_ldr",mode="function"))
 stopifnot(!exists(".cater_susie_ld_diagnosis",mode="function"))

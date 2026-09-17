@@ -1,0 +1,62 @@
+name: One-shot direct core refactor
+
+on:
+  push:
+    branches: [lean-v09-grn-trans-qualification]
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: ${{ !contains(github.event.head_commit.message, '[direct-core-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lean-v09-grn-trans-qualification
+          fetch-depth: 0
+      - name: Apply in-place core refactor
+        run: python3 scripts/direct_core_refactor.py
+      - name: Align hardening tests with v0.9 primary semantics
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/core_hardening_smoke.R')
+          s=p.read_text()
+          old='''# Primary semantics.\nmkfit <- function(status,b=.2,se=.05,p=.01,n=2L,info=10,prec=12) data.frame(n_iv=n,beta=b,se=se,p=p,Q=NA,Q_p=NA,information=info,joint_wald_per_df=NA,effective_F=NA,precision_information=prec,mean_F=NA,min_F=NA,status=status)\nfits <- list(cis=mkfit("NO_IV",n=0L,info=NA,prec=NA),trans=mkfit("OK"),combined=mkfit("OK"))\nd0 <- .cater_primary_decision(fits,has_trans=TRUE,sibling_screen_performed=TRUE,sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE)\nstopifnot(is.na(d0$model),d0$status=="TRANS_ONLY_SENSITIVITY")\nfits2 <- list(cis=mkfit("OK",b=.11,se=.04,p=.01),trans=mkfit("OK"),combined=mkfit("LD_SINGULAR"))\nd2 <- .cater_primary_decision(fits2,has_trans=TRUE,sibling_screen_performed=TRUE,sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE,primary_policy="screened_cater")\nstopifnot(d2$model=="cis",d2$status=="CATER_COMBINED_FAILED_CIS_FALLBACK")\n'''
+          new='''# Lean v0.9 primary semantics: cis is primary whenever available; otherwise no primary.\nmkfit <- function(status,b=.2,se=.05,p=.01,n=2L,info=10,prec=12) data.frame(n_iv=n,beta=b,se=se,p=p,Q=NA,Q_p=NA,information=info,joint_wald_per_df=NA,effective_F=NA,precision_information=prec,mean_F=NA,min_F=NA,status=status)\nfits <- list(cis=mkfit("NO_IV",n=0L,info=NA,prec=NA),trans=mkfit("OK"),combined=mkfit("OK"))\nd0 <- .cater_primary_decision(fits,has_trans=TRUE,sibling_screen_performed=TRUE,sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE)\nstopifnot(is.na(d0$model),d0$status=="NO_CIS_PRIMARY")\nfits2 <- list(cis=mkfit("OK",b=.11,se=.04,p=.01),trans=mkfit("OK"),combined=mkfit("LD_SINGULAR"))\nd2 <- .cater_primary_decision(fits2,has_trans=TRUE,sibling_screen_performed=TRUE,sibling_screen_complete=TRUE,n_active_siblings=0L,sibling_screen_testable=TRUE,primary_policy="screened_cater")\nstopifnot(d2$model=="cis",d2$status=="OK_CIS_PRIMARY")\n'''
+          if old not in s:
+              raise SystemExit('hardening primary block not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - uses: r-lib/actions/setup-r@v2
+      - name: Parse modified R files
+        run: |
+          Rscript -e "parse(file='CATER_MR.R')"
+          Rscript -e "parse(file='R/CATER_MR_core.R')"
+          Rscript -e "parse(file='R/LD_helpers.R')"
+      - name: Core estimator smoke
+        run: Rscript tests/smoke.R
+      - name: Core hardening smoke
+        run: Rscript tests/core_hardening_smoke.R
+      - name: v0.8 compatibility smoke
+        run: Rscript tests/v08_significant_trans_smoke.R
+      - name: v0.9 direct-core smoke
+        run: Rscript tests/v09_lean_trans_smoke.R
+      - name: Combined eQTL input smoke
+        run: Rscript tests/eqtl_table_input_smoke.R
+      - name: scMORE contract smoke
+        run: Rscript tests/scmore_contract_smoke.R
+      - name: Documentation/API smoke
+        run: Rscript tests/documentation_cleanup_smoke.R
+      - name: Positional compatibility smoke
+        run: Rscript tests/positional_compat_smoke.R
+      - name: Commit direct implementation
+        run: |
+          rm -f scripts/direct_core_refactor.py .github/workflows/direct-core-refactor.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: modify CATER-MR core functions directly [direct-core-done]"
+          git push origin HEAD:lean-v09-grn-trans-qualification
