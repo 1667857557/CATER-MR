@@ -1,66 +1,164 @@
-# CATER-MR mathematical specification
+# CATER-MR Lean v0.9 mathematical specification
 
-## Notation
+## 1. Scope
 
-For retained instruments \(G_1,\ldots,G_K\):
+CATER-MR v0.9 is intentionally conservative. It does not introduce a new Mendelian-randomization estimator. Its core contribution is **outcome-independent qualification of trans-eQTL instruments using a cell-type-specific one-hop TF→target GRN plus full cis-eQTL evidence for the proposed parent TF**.
 
-- \(\gamma=(\hat\beta_{G_1X},\ldots,\hat\beta_{G_KX})^T\): marginal SNP-exposure effects.
-- \(\Gamma=(\hat\beta_{G_1Y},\ldots,\hat\beta_{G_KY})^T\): harmonized marginal SNP-outcome effects.
-- \(D_X=\mathrm{diag}(SE_{G_1X},\ldots,SE_{G_KX})\).
-- \(D_Y=\mathrm{diag}(SE_{G_1Y},\ldots,SE_{G_KY})\).
-- \(R\): signed LD correlation matrix after allele alignment.
+The primary causal estimate remains cis MR whenever a usable cis instrument set exists. Qualified trans instruments provide triangulation and optional precision augmentation.
 
-## Instrument eligibility
-
-For target gene \(X\), common statistical eligibility is
+The method is designed for:
 
 \[
-P_{GX}<P_{\mathrm{instrument}}.
+\text{full cis summary} + \text{significance-censored trans summary} + \text{directed TF→target GRN}.
 \]
 
-Cis candidates are
+## 2. Notation
+
+For target gene \(X\):
+
+- \(Pa(X)\): direct one-hop TF parents of \(X\) in the cell-type GRN;
+- \(\hat\beta_{GX}\): SNP→target expression effect;
+- \(\hat\beta_{GT}\): the same SNP→parent-TF cis-eQTL effect;
+- \(\hat\beta_{GY}\): SNP→outcome effect;
+- \(R\): signed, allele-aligned LD correlation matrix;
+- \(D_X\), \(D_Y\): diagonal matrices of exposure and outcome standard errors.
+
+For retained instruments:
 
 \[
-\mathcal C_X^{\mathrm{cis}}
+\gamma=(\hat\beta_{G_1X},\ldots,\hat\beta_{G_KX})^T,
+\qquad
+\Gamma=(\hat\beta_{G_1Y},\ldots,\hat\beta_{G_KY})^T.
+\]
+
+## 3. Cis instruments
+
+The target cis instrument set is
+
+\[
+\mathcal C_X
 =
-\{G:\;G\in\mathrm{cis}(X),\;P_{GX}<P_{\mathrm{instrument}}\}.
+\{G:\;G\in cis(X),\;P_{GX}<\tau_X\},
 \]
 
-For direct GRN parents \(Pa(X)\), trans candidates are
+with default
 
 \[
-\mathcal C_X^{\mathrm{trans}}
+\tau_X=5\times10^{-8}.
+\]
+
+## 4. Raw trans candidates
+
+The GRN is used only as a one-hop topology prior. A reported trans association is a raw candidate when
+
+\[
+\mathcal T_X^{raw}
 =
-\{G:\;P_{GX}<P_{\mathrm{instrument}},\;G\in\mathrm{locus}(T),\;T\in Pa(X)\}.
+\{G:\;P_{GX}^{trans}<\tau_X,\;G\in cis(T),\;T\in Pa(X)\}.
 \]
 
-For significance-censored trans catalogs,
+Physical proximity to a parent TF is **candidate generation only**. It is not sufficient evidence that the SNP perturbs that TF.
+
+## 5. Parent-TF cis anchoring
+
+For each \(G\in\mathcal T_X^{raw}\), CATER-MR queries the full cis summary statistics of every direct parent TF whose cis interval contains \(G\).
+
+A parent TF qualifies when
 
 \[
-P_{\mathrm{instrument}}\le P_{\mathrm{reporting}}^{\mathrm{trans}}.
+P_{GT}<\tau_T,
 \]
 
-Any connected genomic component containing the target cis interval is assigned to the cis component.
-
-## LD selection
-
-Candidates are ordered by target-association \(P\)-value. A candidate \(G_j\) is retained when, for every previously retained \(G_k\) within the configured genomic window,
+with default
 
 \[
-r_{jk}^{2}<\tau_{LD}.
+\tau_T=\tau_X=5\times10^{-8}.
 \]
 
-The retained signed \(R\) is propagated to MR estimation.
+Let
 
-## Generalized IVW
+\[
+Q_X(G)=\{T\in Pa(X):G\in cis(T),\;P_{GT}<\tau_T\}.
+\]
 
-Outcome covariance:
+The mechanism-supported trans set requires a unique qualifying parent:
+
+\[
+\mathcal T_X^{extended}
+=
+\{G\in\mathcal T_X^{raw}:|Q_X(G)|=1\}.
+\]
+
+If \(|Q_X(G)|>1\), the SNP is marked `TRANS_AMBIGUOUS_PARENT` and excluded from the default trans set because the proposed source regulator is not identifiable from the available evidence.
+
+The supported mechanism is therefore
+
+\[
+G\xrightarrow{cis\ eQTL}T
+\xrightarrow{GRN}X
+\]
+
+with an independently observed
+
+\[
+G\xrightarrow{trans\ eQTL}X.
+\]
+
+This increases mechanistic plausibility but does **not** prove mediation or the MR exclusion restriction.
+
+## 6. Observed trans-specificity filter
+
+For significance-censored trans catalogs, define
+
+\[
+H_G
+=
+\left|\{Z:(G,Z)\text{ is a reported significant trans-eQTL pair}\}\right|.
+\]
+
+The default core trans set is
+
+\[
+\mathcal T_X^{core}
+=
+\{G\in\mathcal T_X^{extended}:H_G\le h_{max}\},
+\]
+
+with default
+
+\[
+h_{max}=1.
+\]
+
+This is only an **observed significant-target burden**. If another SNP-gene association is absent from a significance-censored catalog, CATER-MR treats it as unavailable/censored information, not as \(\beta=0\).
+
+`trans_set="extended"` removes the \(H_G\) filter but retains the TF-cis anchor and unique-parent requirements.
+
+## 7. LD selection
+
+Candidates are ordered by target-association P value. A candidate \(G_j\) is retained only if for every already-retained \(G_k\) within the configured genomic window,
+
+\[
+r_{jk}^2<\tau_{LD}.
+\]
+
+Default:
+
+\[
+\tau_{LD}=0.01.
+\]
+
+Residual signed LD among retained variants is preserved for MR estimation.
+
+## 8. Generalized IVW estimator
+
+For any retained instrument set,
 
 \[
 \Omega_Y=D_YRD_Y.
 \]
 
-For \(K>1\),
+For \(K>1\):
 
 \[
 \hat\theta
@@ -86,7 +184,7 @@ Q
 \qquad df=K-1.
 \]
 
-For one IV,
+For one IV:
 
 \[
 \hat\theta=\frac{\Gamma}{\gamma},
@@ -94,13 +192,61 @@ For one IV,
 SE(\hat\theta)=\left|\frac{SE_Y}{\gamma}\right|.
 \]
 
-## Instrument strength
+## 9. Core models
 
-Per-IV statistic:
+CATER-MR reports three substantive fits:
+
+### Cis primary
 
 \[
-F_j=\left(\frac{\gamma_j}{SE_{X,j}}\right)^2.
+\hat\theta_{cis}=GIVW(\mathcal C_X).
 \]
+
+If available, this is always the primary model.
+
+### Qualified trans
+
+\[
+\hat\theta_{trans}=GIVW(\mathcal T_X^{core})
+\]
+
+for the default analysis, or \(\mathcal T_X^{extended}\) when explicitly requested.
+
+This is a triangulation/sensitivity estimate.
+
+### Augmented CATER
+
+\[
+\hat\theta_{aug}
+=
+GIVW(\mathcal C_X\cup\mathcal T_X^{core}).
+\]
+
+The implementation retains a historical `combined` alias for backward compatibility, but documentation uses `augmented`.
+
+The augmented fit is **not automatically promoted to primary**, even if it is more precise.
+
+## 10. Why precision can improve without validity improving
+
+If the structural relation is
+
+\[
+\Gamma=\theta\gamma+\alpha+\varepsilon,
+\]
+
+where \(\alpha\) contains SNP→outcome effects not mediated through target \(X\), then
+
+\[
+E(\hat\theta)
+=
+\theta+
+\frac{\gamma^T\Omega_Y^{-1}\alpha}
+     {\gamma^T\Omega_Y^{-1}\gamma}.
+\]
+
+Adding valid trans IVs increases information, but adding trans IVs with structured pleiotropy can increase bias. Therefore lower standard error is not interpreted as proof of a better causal estimate.
+
+## 11. Instrument strength
 
 Exposure covariance:
 
@@ -114,37 +260,43 @@ Joint exposure information:
 I_X=\gamma^T\Sigma_X^{-1}\gamma.
 \]
 
-Reported effective strength:
+Effective strength:
 
 \[
-F_{\mathrm{eff}}=\frac{I_X}{K}.
+F_{eff}=\frac{I_X}{K}.
 \]
 
-## Trans information fractions
+v0.9 reports separate values for cis, trans, augmented, and primary models. The backward-compatible generic `effective_F` field maps to the actual primary model.
 
-Exposure-side trans increment:
+## 12. Precision gain
 
-\[
-f_{\mathrm{trans,exp}}
-=
-\frac{I_{\mathrm{combined}}-I_{\mathrm{cis}}}
-     {I_{\mathrm{combined}}}.
-\]
-
-MR-precision increment:
+Define
 
 \[
-f_{\mathrm{trans,prec}}
-=
-\frac{J_{\mathrm{combined}}-J_{\mathrm{cis}}}
-     {J_{\mathrm{combined}}},
-\qquad
 J=\gamma^T\Omega_Y^{-1}\gamma.
 \]
 
-## Cis-trans heterogeneity
+The trans contribution to augmented MR precision is
 
-Let \(w_c\) and \(w_t\) be normalized GIVW weight vectors for cis and trans subsets. Cross-block outcome covariance is
+\[
+f_{trans,prec}
+=
+\frac{J_{aug}-J_{cis}}{J_{aug}}.
+\]
+
+The directly interpretable standard-error reduction is
+
+\[
+R_{SE}
+=
+1-\frac{SE_{aug}}{SE_{cis}}.
+\]
+
+These metrics quantify precision gain only; they do not measure reduction of pleiotropic bias.
+
+## 13. Cis-trans heterogeneity
+
+Let \(w_c\) and \(w_t\) be normalized GIVW weight vectors for cis and trans subsets and
 
 \[
 \Omega_{ct}=D_{Y,c}R_{ct}D_{Y,t}.
@@ -153,7 +305,7 @@ Let \(w_c\) and \(w_t\) be normalized GIVW weight vectors for cis and trans subs
 Then
 
 \[
-\mathrm{Cov}(\hat\theta_c,\hat\theta_t)
+Cov(\hat\theta_c,\hat\theta_t)
 =w_c^T\Omega_{ct}w_t,
 \]
 
@@ -161,152 +313,82 @@ Then
 Z_{c-t}
 =
 \frac{\hat\theta_c-\hat\theta_t}
-{\sqrt{SE_c^2+SE_t^2-2\mathrm{Cov}(\hat\theta_c,\hat\theta_t)}}.
+{\sqrt{SE_c^2+SE_t^2-2Cov(\hat\theta_c,\hat\theta_t)}}.
 \]
 
-## Sibling co-perturbation omnibus test
+This is a consistency diagnostic, not an outcome-based IV-selection rule.
 
-For one sibling exposure with effect vector \(b\), standard-error matrix \(D\), and signed LD \(R\),
+## 14. TF-locus influence diagnostics
 
-\[
-\Sigma=DRD,
-\]
-
-\[
-Q_{\mathrm{sib}}=b^T\Sigma^{-1}b,
-\qquad
-df=\mathrm{rank}(R).
-\]
-
-Sibling-test \(P\)-values are BH-adjusted across tested siblings.
-
-## TF-locus diagnostics
-
-For TF locus \(T\), leave-one-locus effect change is
+For a parent-TF locus \(T\):
 
 \[
 \Delta_T
 =
-\left|\hat\theta_{\mathrm{all}}-\hat\theta_{-T}\right|.
+|\hat\theta_{all}-\hat\theta_{-T}|.
 \]
 
 Exposure-information weight:
 
 \[
-w_{T,\mathrm{exp}}
+w_{T,exp}
 =
-\frac{I_{\mathrm{all}}-I_{-T}}{I_{\mathrm{all}}}.
+\frac{I_{all}-I_{-T}}{I_{all}}.
 \]
 
 MR-precision weight:
 
 \[
-w_{T,\mathrm{prec}}
+w_{T,prec}
 =
-\frac{J_{\mathrm{all}}-J_{-T}}{J_{\mathrm{all}}}.
+\frac{J_{all}-J_{-T}}{J_{all}}.
 \]
 
-## Multivariable MR
+These diagnose whether one parent locus dominates the augmented result.
 
-For \(m\) retained SNPs and \(p\) exposures, let \(B\in\mathbb R^{m\times p}\) contain complete SNP-exposure effects and \(\Gamma_Y\in\mathbb R^m\) contain SNP-outcome effects.
+## 15. Advanced sensitivity analyses
 
-\[
-\Omega_Y=D_YRD_Y.
-\]
+Sibling co-perturbation screening and correlated-IV MVMR remain implemented but are disabled by default.
 
-Correlated-IV MV-IVW:
+A standard MVMR fit requires a complete selected-SNP × exposure effect matrix \(B\):
 
 \[
-\hat\theta
+\hat\theta_{MV}
 =
-(B^T\Omega_Y^{-1}B)^{-1}
-B^T\Omega_Y^{-1}\Gamma_Y.
+(B^T\Omega_Y^{-1}B)^{-1}B^T\Omega_Y^{-1}\Gamma_Y.
+\]
+
+If any required cross-exposure SNP effect or standard error is unavailable, the implementation fails closed with `MVMR_CROSS_EXPOSURE_EFFECTS_UNAVAILABLE`. Missing associations from a significant-only trans catalog are never filled with zero.
+
+The correlated conditional-F implementation remains explicitly experimental and cannot make a network model primary in Lean v0.9.
+
+## 16. Claims the method does not make
+
+The following implications are explicitly rejected:
+
+\[
+G\in locus(T) \not\Rightarrow G\rightarrow T,
 \]
 
 \[
-\mathrm{Cov}(\hat\theta)
-=
-(B^T\Omega_Y^{-1}B)^{-1}.
-\]
-
-Residual statistic:
-
-\[
-Q_{MV}
-=
-(\Gamma_Y-B\hat\theta)^T
-\Omega_Y^{-1}
-(\Gamma_Y-B\hat\theta),
-\qquad df=m-p.
-\]
-
-A standard MVMR fit requires every selected SNP-exposure pair in \(B\) and its standard-error matrix to be numerically observed.
-
-## Scale-invariant MVMR condition diagnostic
-
-With \(LL^T=\Omega_Y\),
-
-\[
-B_w=L^{-1}B.
-\]
-
-After column normalization,
-
-\[
-\widetilde B_{w,\cdot k}
-=
-\frac{B_{w,\cdot k}}{\|B_{w,\cdot k}\|_2},
-\]
-
-and the reported condition diagnostic is
-
-\[
-\kappa(\widetilde B_w).
-\]
-
-## Experimental correlated conditional-F diagnostic
-
-For exposure \(i\), let \(\delta_i\) denote the fitted coefficients of exposure-association column \(i\) on the remaining columns. Define
-
-\[
-q_i=1,
-\qquad
-q_{-i}=-\delta_i.
-\]
-
-For SNP \(j\) and exposure \(k\),
-
-\[
-M_{jk}=SE_{jk}q_k.
-\]
-
-With exposure-estimation-error correlation matrix \(C\), the working residual covariance is
-
-\[
-V_i=(MCM^T)\circ R,
-\]
-
-where \(\circ\) is the Hadamard product. The residual vector is
-
-\[
-r_i=B_{\cdot i}-B_{\cdot,-i}\delta_i.
-\]
-
-The iterative diagnostic reports
-
-\[
-Q_i=r_i^TV_i^{-1}r_i,
+G\rightarrow T\;\&\;T\rightarrow X\;\&\;G\rightarrow X
+\not\Rightarrow
+\text{exclusion restriction holds},
 \]
 
 \[
-F_{\mathrm{cond},i}^{\mathrm{experimental}}
-=
-\frac{Q_i}{m-p+1}.
+\text{not reported trans association}\not\Rightarrow\beta=0,
 \]
 
-This statistic is labeled `EXPERIMENTAL_CORRELATED_IV_CONDITIONAL_F` in the implementation.
+\[
+SE_{aug}<SE_{cis}\not\Rightarrow\hat\theta_{aug}\text{ is less biased}.
+\]
+
+The GRN and TF-cis anchor are therefore interpreted as **mechanism filters that reduce, but cannot eliminate, trans-IV validity risk**.
 
 ## References
 
-1. Burgess S, Zuber V, Valdes-Marquez E, Sun BB, Hopewell JC. Mendelian randomization with fine-mapped genetic data: Choosing from large numbers of correlated instrumental variables. *Genet Epidemiol.* 2017;41:714-725. https://doi.org/10.1002/gepi.22077
-2. Sanderson E, Davey Smith G, Windmeijer F, Bowden J. An examination of multivariable Mendelian randomization in the single-sample and two-sample summary data settings. *Int J Epidemiol.* 2019;48:713-727. https://doi.org/10.1093/ije/dyy262
+1. Aguet F, Brown AA, Castel SE, et al. Genetic effects on gene expression across human tissues. *Nature*. 2017;550:204-213. https://doi.org/10.1038/nature24277
+2. Zheng J, Haberland V, Baird D, et al. Phenome-wide Mendelian randomization mapping the influence of the plasma proteome on complex diseases. *Nature Genetics*. 2020;52:1122-1131. https://doi.org/10.1038/s41588-020-0682-6
+3. Burgess S, Zuber V, Valdes-Marquez E, Sun BB, Hopewell JC. Mendelian randomization with fine-mapped genetic data: Choosing from large numbers of correlated instrumental variables. *Genetic Epidemiology*. 2017;41:714-725. https://doi.org/10.1002/gepi.22077
+4. Sanderson E, Davey Smith G, Windmeijer F, Bowden J. An examination of multivariable Mendelian randomization in the single-sample and two-sample summary data settings. *International Journal of Epidemiology*. 2019;48:713-727. https://doi.org/10.1093/ije/dyy262
