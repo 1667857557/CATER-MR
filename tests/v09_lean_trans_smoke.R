@@ -19,7 +19,7 @@ write_gene("TF1",base)
 tf2 <- base[3,,drop=FALSE]; tf2$BETA <- .12; tf2$P <- 1e-12
 write_gene("TF2",tf2)
 
-qtl <- .cater_standardize_sumstats(base,qtl_n=500,label="target trans")
+qtl <- .cater_standardize_sumstats(base,n_default=500,label="target trans")
 qtl$provenance <- "REPORTED_TRANS"
 map <- data.frame(snp=qtl$snp,source="trans",
                   parent_tf=c("TF1","TF1","TF1;TF2"),
