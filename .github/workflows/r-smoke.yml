@@ -15,6 +15,7 @@ jobs:
         run: |
           Rscript -e "parse(file='CATER_MR.R')"
           Rscript -e "parse(file='R/CATER_MR_core.R')"
+          Rscript -e "parse(file='R/CATER_MR_lean.R')"
           Rscript -e "parse(file='R/LD_helpers.R')"
           Rscript -e "parse(file='CATER_EQTL_INPUT.R')"
           Rscript -e "parse(file='SCMORE_GRN.R')"
@@ -22,8 +23,10 @@ jobs:
         run: Rscript tests/smoke.R
       - name: Run core hardening tests
         run: Rscript tests/core_hardening_smoke.R
-      - name: Run v0.8 significant-trans architecture tests
+      - name: Run v0.8 compatibility tests
         run: Rscript tests/v08_significant_trans_smoke.R
+      - name: Run Lean v0.9 trans qualification tests
+        run: Rscript tests/v09_lean_trans_smoke.R
       - name: Run combined eQTL input tests
         run: Rscript tests/eqtl_table_input_smoke.R
       - name: Run scMORE-to-CATER GRN contract tests
